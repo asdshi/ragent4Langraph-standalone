@@ -1,4 +1,14 @@
-"""Configuration loading and validation for the Modular RAG MCP Server."""
+"""配置加载与校验模块。
+
+职责：
+1. 从 YAML 文件读取项目配置。
+2. 将原始字典映射为强类型 dataclass。
+3. 在启动早期执行关键字段校验，尽早失败（fail-fast）。
+
+设计目标：
+- 路径解析与当前工作目录无关，保证在不同启动位置都能稳定加载配置。
+- 校验错误使用统一异常类型，便于调用方捕获并友好提示。
+"""
 
 from __future__ import annotations
 
@@ -19,13 +29,11 @@ DEFAULT_SETTINGS_PATH: Path = REPO_ROOT / "config" / "settings.yaml"
 
 
 def resolve_path(relative: Union[str, Path]) -> Path:
-    """Resolve a repo-relative path to an absolute path.
+    """将仓库相对路径解析为绝对路径。
 
-    If *relative* is already absolute it is returned as-is.  Otherwise
-    it is resolved against :data:`REPO_ROOT`.
-
-    >>> resolve_path("config/settings.yaml")  # doctest: +SKIP
-    PosixPath('/home/user/Modular-RAG-MCP-Server/config/settings.yaml')
+    行为规则：
+    - 如果入参已经是绝对路径，则直接返回。
+    - 否则默认相对仓库根目录 `REPO_ROOT` 进行解析。
     """
     p = Path(relative)
     if p.is_absolute():
@@ -34,10 +42,14 @@ def resolve_path(relative: Union[str, Path]) -> Path:
 
 
 class SettingsError(ValueError):
-    """Raised when settings validation fails."""
+    """配置异常。
+
+    在配置缺失、类型不匹配或语义不合法时抛出。
+    """
 
 
 def _require_mapping(data: Dict[str, Any], key: str, path: str) -> Dict[str, Any]:
+    """读取并断言子配置必须是 mapping(dict)。"""
     value = data.get(key)
     if value is None:
         raise SettingsError(f"Missing required field: {path}.{key}")
@@ -47,12 +59,14 @@ def _require_mapping(data: Dict[str, Any], key: str, path: str) -> Dict[str, Any
 
 
 def _require_value(data: Dict[str, Any], key: str, path: str) -> Any:
+    """读取必填字段，字段缺失或为 None 时抛出异常。"""
     if key not in data or data.get(key) is None:
         raise SettingsError(f"Missing required field: {path}.{key}")
     return data[key]
 
 
 def _require_str(data: Dict[str, Any], key: str, path: str) -> str:
+    """读取并断言非空字符串字段。"""
     value = _require_value(data, key, path)
     if not isinstance(value, str) or not value.strip():
         raise SettingsError(f"Expected non-empty string for field: {path}.{key}")
@@ -60,6 +74,7 @@ def _require_str(data: Dict[str, Any], key: str, path: str) -> str:
 
 
 def _require_int(data: Dict[str, Any], key: str, path: str) -> int:
+    """读取并断言整数字段。"""
     value = _require_value(data, key, path)
     if not isinstance(value, int):
         raise SettingsError(f"Expected integer for field: {path}.{key}")
@@ -67,6 +82,7 @@ def _require_int(data: Dict[str, Any], key: str, path: str) -> int:
 
 
 def _require_number(data: Dict[str, Any], key: str, path: str) -> float:
+    """读取并断言数值字段，最终统一转为 float。"""
     value = _require_value(data, key, path)
     if not isinstance(value, (int, float)):
         raise SettingsError(f"Expected number for field: {path}.{key}")
@@ -74,6 +90,7 @@ def _require_number(data: Dict[str, Any], key: str, path: str) -> float:
 
 
 def _require_bool(data: Dict[str, Any], key: str, path: str) -> bool:
+    """读取并断言布尔字段。"""
     value = _require_value(data, key, path)
     if not isinstance(value, bool):
         raise SettingsError(f"Expected boolean for field: {path}.{key}")
@@ -81,6 +98,7 @@ def _require_bool(data: Dict[str, Any], key: str, path: str) -> bool:
 
 
 def _require_list(data: Dict[str, Any], key: str, path: str) -> List[Any]:
+    """读取并断言列表字段。"""
     value = _require_value(data, key, path)
     if not isinstance(value, list):
         raise SettingsError(f"Expected list for field: {path}.{key}")
@@ -191,6 +209,12 @@ class Settings:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Settings":
+        """将原始配置字典构建为 `Settings` 实例。
+
+        该过程包含两层校验：
+        - 结构校验：每个一级分组是否存在且类型正确。
+        - 字段校验：关键字段是否存在且类型符合预期。
+        """
         if not isinstance(data, dict):
             raise SettingsError("Settings root must be a mapping")
 
@@ -202,6 +226,8 @@ class Settings:
         evaluation = _require_mapping(data, "evaluation", "settings")
         observability = _require_mapping(data, "observability", "settings")
 
+        # ingestion/vision_llm 属于可选能力模块：
+        # 只有在配置中声明时才构造对应设置对象。
         ingestion_settings = None
         if "ingestion" in data:
             ingestion = _require_mapping(data, "ingestion", "settings")
@@ -287,7 +313,11 @@ class Settings:
 
 
 def validate_settings(settings: Settings) -> None:
-    """Validate settings and raise SettingsError if invalid."""
+    """执行语义层校验。
+
+    `from_dict` 主要保障“结构与类型”正确；
+    这里补充“业务语义”必填项检查，确保关键 provider/参数可用。
+    """
 
     if not settings.llm.provider:
         raise SettingsError("Missing required field: llm.provider")
@@ -306,11 +336,11 @@ def validate_settings(settings: Settings) -> None:
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
-    """Load settings from a YAML file and validate required fields.
+    """从 YAML 文件加载并校验配置。
 
-    Args:
-        path: Path to settings YAML.  Defaults to
-            ``<repo>/config/settings.yaml`` (absolute, CWD-independent).
+    参数：
+    - path: 配置文件路径。
+      为空时默认使用 `<repo>/config/settings.yaml`，且与当前工作目录无关。
     """
     settings_path = Path(path) if path is not None else DEFAULT_SETTINGS_PATH
     if not settings_path.is_absolute():
@@ -318,6 +348,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if not settings_path.exists():
         raise SettingsError(f"Settings file not found: {settings_path}")
 
+    # 使用 safe_load 避免执行任意 YAML 标签构造逻辑。
     with settings_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
 

@@ -1,16 +1,16 @@
-"""Query Processor for preprocessing user queries.
+"""查询预处理器（Query Processor）。
 
-This module provides query preprocessing functionality including:
-- Keyword extraction using rule-based tokenization
-- Stopword filtering for Chinese and English
-- Filter parsing from query syntax (e.g., "collection:docs")
-- Query normalization and cleaning
+本模块提供对用户查询的预处理功能，包括：
+- 基于规则的关键词提取（分词）
+- 中英文停用词过滤
+- 从查询语法中解析过滤器（例如 "collection:docs"）
+- 查询规范化与清洗
 
-Design Principles:
-- Rule-based first: Use simple, deterministic rules for reliability
-- Language-aware: Support both Chinese and English queries
-- Extensible: Easy to add synonym expansion or LLM-based processing later
-- Configuration-driven: Stopwords and patterns configurable via settings
+设计原则：
+- 以规则为主：优先使用简单、确定性的规则以保证稳定性
+- 语言感知：支持中文与英文查询
+- 可扩展：方便后续添加同义词扩展或基于 LLM 的处理
+- 配置驱动：停用词和模式可通过配置调整
 """
 
 import re
@@ -79,13 +79,13 @@ FILTER_PATTERN: Pattern = re.compile(r'(\w+):([^\s]+)')
 
 @dataclass
 class QueryProcessorConfig:
-    """Configuration for QueryProcessor.
-    
-    Attributes:
-        stopwords: Set of words to filter out
-        min_keyword_length: Minimum length for a keyword to be included
-        max_keywords: Maximum number of keywords to extract
-        enable_filter_parsing: Whether to parse filter syntax from query
+    """`QueryProcessor` 的配置。
+
+    属性：
+        stopwords: 需要过滤的停用词集合
+        min_keyword_length: 包含为关键词的最小长度
+        max_keywords: 最多提取多少个关键词
+        enable_filter_parsing: 是否解析查询中的过滤器语法
     """
     stopwords: Set[str] = field(default_factory=lambda: DEFAULT_STOPWORDS.copy())
     min_keyword_length: int = 1
@@ -94,12 +94,12 @@ class QueryProcessorConfig:
 
 
 class QueryProcessor:
-    """Preprocesses user queries for retrieval.
-    
-    Extracts keywords, filters stopwords, and parses filter syntax
-    to prepare queries for Dense and Sparse retrievers.
-    
-    Example:
+    """用于检索前对用户查询进行预处理的类。
+
+    功能：提取关键词、过滤停用词、解析查询中的过滤器语法，
+    以便为稠密检索（Dense）和稀疏检索（Sparse）准备输入。
+
+    示例：
         >>> processor = QueryProcessor()
         >>> result = processor.process("如何配置 Azure OpenAI？")
         >>> print(result.keywords)
@@ -107,21 +107,21 @@ class QueryProcessor:
     """
     
     def __init__(self, config: Optional[QueryProcessorConfig] = None):
-        """Initialize QueryProcessor.
-        
-        Args:
-            config: Optional configuration. Uses defaults if not provided.
+        """初始化 QueryProcessor。
+
+        参数：
+            config: 可选的配置；如果未提供则使用默认配置。
         """
         self.config = config or QueryProcessorConfig()
     
     def process(self, query: str) -> ProcessedQuery:
-        """Process a user query into structured format.
-        
-        Args:
-            query: Raw user query string
-            
-        Returns:
-            ProcessedQuery with extracted keywords and filters
+        """将原始查询处理为结构化格式。
+
+        参数：
+            query: 原始用户查询字符串
+
+        返回：
+            包含提取关键词与解析到的过滤器的 `ProcessedQuery`。
         """
         if not query or not query.strip():
             return ProcessedQuery(
@@ -130,13 +130,13 @@ class QueryProcessor:
                 filters={}
             )
         
-        # Normalize query
+        # 去除空白,规范字符串
         normalized = self._normalize(query)
         
-        # Extract filters from query (e.g., "collection:docs")
+        # 分割过滤字典和纯净query
         filters, query_without_filters = self._extract_filters(normalized)
         
-        # Tokenize and extract keywords
+        # 用jieba库分词,token为干净的无标点符号的列表
         tokens = self._tokenize(query_without_filters)
         
         # Filter stopwords and apply constraints
@@ -149,32 +149,21 @@ class QueryProcessor:
         )
     
     def _normalize(self, query: str) -> str:
-        """Normalize query string.
-        
-        - Strip whitespace
-        - Normalize unicode
-        - Convert to consistent format
-        
-        Args:
-            query: Raw query string
-            
-        Returns:
-            Normalized query string
+        """规范化查询字符串。
+
+        - 去除多余空白
+        - 统一空白和格式
+
+        返回规范化后的查询字符串。
         """
         # Strip and normalize whitespace
         normalized = " ".join(query.split())
         return normalized
     
     def _extract_filters(self, query: str) -> tuple[Dict[str, Any], str]:
-        """Extract filter syntax from query.
-        
-        Supports syntax like: "collection:api-docs keyword1 keyword2"
-        
-        Args:
-            query: Normalized query string
-            
-        Returns:
-            Tuple of (filters dict, query without filter syntax)
+        """从查询中提取过滤器语法（如 `collection:api-docs`）。
+
+        返回一个元组：(解析出的过滤器字典, 去除过滤器后的查询文本)。
         """
         if not self.config.enable_filter_parsing:
             return {}, query
@@ -208,17 +197,12 @@ class QueryProcessor:
         return filters, query_without_filters
     
     def _tokenize(self, text: str) -> List[str]:
-        """Tokenize text into words/terms.
-        
-        Uses jieba for Chinese text segmentation, consistent with the
-        index-side tokenizer (SparseEncoder) so BM25 matching works.
-        English text is handled natively by jieba (preserved as-is).
-        
-        Args:
-            text: Text to tokenize
-            
-        Returns:
-            List of tokens
+        """将文本切分为词/项。
+
+        使用 `jieba` 做中文分词，这样与索引端（例如 SparseEncoder）保持一致，
+        有利于 BM25 等稀疏检索的匹配。英文会被保留为整体词项。
+
+        返回分词后的 token 列表。
         """
         tokens: List[str] = []
 
@@ -237,18 +221,15 @@ class QueryProcessor:
         return tokens
     
     def _filter_keywords(self, tokens: List[str]) -> List[str]:
-        """Filter tokens to get meaningful keywords.
-        
-        - Remove stopwords
-        - Apply minimum length constraint
-        - Deduplicate while preserving order
-        - Apply maximum count limit
-        
-        Args:
-            tokens: List of tokens
-            
-        Returns:
-            List of filtered keywords
+        """从 token 中过滤并提取有意义的关键词。
+
+        处理流程：
+        - 删除停用词
+        - 应用最小长度约束
+        - 去重（保留顺序）
+        - 限制结果数量
+
+        返回最终的关键词列表。
         """
         seen: Set[str] = set()
         keywords: List[str] = []
@@ -280,19 +261,11 @@ class QueryProcessor:
         return keywords
     
     def add_stopwords(self, words: Set[str]) -> None:
-        """Add words to stopword set.
-        
-        Args:
-            words: Set of words to add
-        """
+        """向停用词集合中添加词项。"""
         self.config.stopwords.update(words)
     
     def remove_stopwords(self, words: Set[str]) -> None:
-        """Remove words from stopword set.
-        
-        Args:
-            words: Set of words to remove
-        """
+        """从停用词集合中移除词项。"""
         self.config.stopwords -= words
 
 
@@ -302,16 +275,15 @@ def create_query_processor(
     max_keywords: int = 20,
     enable_filter_parsing: bool = True
 ) -> QueryProcessor:
-    """Factory function to create QueryProcessor.
-    
-    Args:
-        stopwords: Custom stopwords set. Uses default if None.
-        min_keyword_length: Minimum keyword length
-        max_keywords: Maximum keywords to extract
-        enable_filter_parsing: Whether to parse filter syntax
-        
-    Returns:
-        Configured QueryProcessor instance
+    """创建并返回配置好的 `QueryProcessor`。
+
+    参数：
+        stopwords: 自定义停用词集合；若为 `None` 则使用默认停用词
+        min_keyword_length: 最小关键词长度
+        max_keywords: 最大关键词数量
+        enable_filter_parsing: 是否解析过滤器语法
+
+    返回：配置好的 `QueryProcessor` 实例。
     """
     config = QueryProcessorConfig(
         stopwords=stopwords if stopwords is not None else DEFAULT_STOPWORDS.copy(),

@@ -1,9 +1,9 @@
-"""MCP Protocol Handler for JSON-RPC 2.0 message handling.
+"""MCP 协议处理器（JSON-RPC 2.0）。
 
-This module provides the ProtocolHandler class that encapsulates:
-- Tool registration and schema management
-- JSON-RPC error code handling
-- Capability negotiation during initialize
+模块职责：
+1. 工具注册与输入 schema 管理。
+2. 工具执行调度与统一错误处理。
+3. 在初始化阶段对外声明服务能力（capabilities）。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from src.observability.logger import get_logger
 
 # JSON-RPC 2.0 Error Codes
 class JSONRPCErrorCodes:
-    """Standard JSON-RPC 2.0 error codes."""
+    """JSON-RPC 2.0 标准错误码常量。"""
 
     PARSE_ERROR = -32700
     INVALID_REQUEST = -32600
@@ -30,7 +30,10 @@ class JSONRPCErrorCodes:
 
 @dataclass
 class ToolDefinition:
-    """Definition of an MCP tool."""
+    """MCP 工具定义。
+
+包含工具名称、描述、入参 JSON Schema 与执行处理器。
+    """
 
     name: str
     description: str
@@ -40,17 +43,16 @@ class ToolDefinition:
 
 @dataclass
 class ProtocolHandler:
-    """Handles MCP protocol operations including tool registration and execution.
+    """MCP 协议核心处理类。
 
-    This class encapsulates:
-    - Tool registration with schema validation
-    - Tool execution with error handling
-    - Capability declaration for initialize response
+该类将“协议层”与“业务工具层”解耦：
+- 协议层负责路由、参数承接、错误包装。
+- 业务层只需实现工具 handler，并按约定注册。
 
-    Attributes:
-        server_name: Name of the MCP server.
-        server_version: Version string of the server.
-        tools: Registry of available tools.
+属性：
+- server_name: 服务器名。
+- server_version: 服务版本号。
+- tools: 工具注册表（name -> ToolDefinition）。
     """
 
     server_name: str
@@ -58,7 +60,7 @@ class ProtocolHandler:
     tools: Dict[str, ToolDefinition] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Initialize logger after dataclass initialization."""
+        """dataclass 初始化后补充 logger。"""
         self._logger = get_logger(log_level="INFO")
 
     def register_tool(
@@ -68,16 +70,16 @@ class ProtocolHandler:
         input_schema: Dict[str, Any],
         handler: Callable[..., Any],
     ) -> None:
-        """Register a tool with the protocol handler.
+        """注册 MCP 工具。
 
-        Args:
-            name: Unique name for the tool.
-            description: Human-readable description of what the tool does.
-            input_schema: JSON Schema for the tool's input parameters.
-            handler: Async function that executes the tool logic.
+参数：
+- name: 工具唯一名称。
+- description: 人类可读描述。
+- input_schema: 工具入参 JSON Schema。
+- handler: 实际执行逻辑（通常为 async 函数）。
 
-        Raises:
-            ValueError: If a tool with the same name is already registered.
+异常：
+- ValueError: 工具重名时抛出，避免覆盖已注册工具。
         """
         if name in self.tools:
             raise ValueError(f"Tool '{name}' is already registered")
@@ -91,11 +93,7 @@ class ProtocolHandler:
         self._logger.info("Registered tool: %s", name)
 
     def get_tool_schemas(self) -> List[types.Tool]:
-        """Get list of tool schemas for tools/list response.
-
-        Returns:
-            List of Tool objects with name, description, and inputSchema.
-        """
+        """获取 `tools/list` 所需的工具描述列表。"""
         return [
             types.Tool(
                 name=tool.name,
@@ -108,17 +106,12 @@ class ProtocolHandler:
     async def execute_tool(
         self, name: str, arguments: Dict[str, Any]
     ) -> types.CallToolResult:
-        """Execute a registered tool by name.
+        """按名称执行工具并统一封装返回值。
 
-        Args:
-            name: Name of the tool to execute.
-            arguments: Arguments to pass to the tool handler.
-
-        Returns:
-            CallToolResult with content blocks or error indication.
-
-        Raises:
-            ValueError: If tool is not found.
+返回值规范：
+- 若 handler 已返回 `CallToolResult`，直接透传。
+- 若返回字符串/列表/其他对象，转换为标准文本 content。
+- 出现参数错误或内部异常时，返回 `isError=True`。
         """
         if name not in self.tools:
             self._logger.warning("Tool not found: %s", name)
@@ -137,7 +130,7 @@ class ProtocolHandler:
             self._logger.info("Executing tool: %s", name)
             result = await tool.handler(**arguments)
 
-            # Handle different return types
+            # 兼容不同 handler 返回类型，统一收敛为 CallToolResult。
             if isinstance(result, types.CallToolResult):
                 return result
             if isinstance(result, str):
@@ -154,7 +147,7 @@ class ProtocolHandler:
             )
 
         except TypeError as e:
-            # Invalid parameters
+            # 参数错误：通常是调用参数缺失/多余或类型不匹配。
             self._logger.error("Invalid params for tool %s: %s", name, e)
             return types.CallToolResult(
                 content=[
@@ -166,7 +159,7 @@ class ProtocolHandler:
                 isError=True,
             )
         except Exception as e:
-            # Internal error - don't leak stack trace
+            # 内部错误：日志保留堆栈，协议返回对外通用信息，避免泄漏细节。
             self._logger.exception("Internal error executing tool %s", name)
             return types.CallToolResult(
                 content=[
@@ -179,22 +172,14 @@ class ProtocolHandler:
             )
 
     def get_capabilities(self) -> Dict[str, Any]:
-        """Get server capabilities for initialize response.
-
-        Returns:
-            Dictionary of server capabilities.
-        """
+        """返回 initialize 阶段的能力声明。"""
         return {
             "tools": {} if self.tools else {},
         }
 
 
 def _register_default_tools(protocol_handler: ProtocolHandler) -> None:
-    """Register all default MCP tools with the protocol handler.
-
-    Args:
-        protocol_handler: ProtocolHandler instance to register tools with.
-    """
+    """注册默认工具集合。"""
     # Import and register query_knowledge_hub tool
     from src.mcp_server.tools.query_knowledge_hub import register_tool as register_query_tool
     register_query_tool(protocol_handler)
@@ -214,20 +199,14 @@ def create_mcp_server(
     protocol_handler: Optional[ProtocolHandler] = None,
     register_tools: bool = True,
 ) -> Server:
-    """Create and configure an MCP server with the protocol handler.
+    """创建并配置 MCP Server。
 
-    This factory function creates a low-level MCP Server instance and
-    registers the necessary handlers for tools/list and tools/call.
+该工厂函数会：
+1. 准备协议处理器（可复用外部传入实例）。
+2. 按需注册默认工具。
+3. 绑定 `tools/list` 与 `tools/call` 路由。
 
-    Args:
-        server_name: Name of the server.
-        server_version: Version string.
-        protocol_handler: Optional pre-configured protocol handler.
-            If None, a new one will be created.
-        register_tools: Whether to register default tools (default: True).
-
-    Returns:
-        Configured Server instance ready to run.
+返回可直接运行的低层 `Server` 实例。
     """
     if protocol_handler is None:
         protocol_handler = ProtocolHandler(
@@ -256,22 +235,12 @@ def create_mcp_server(
         """Handle tools/call request."""
         return await protocol_handler.execute_tool(name, arguments)
 
-    # Store protocol handler on server for access
+    # 将协议处理器挂在 server 上，便于测试或扩展场景读取。
     server._protocol_handler = protocol_handler  # type: ignore[attr-defined]
 
     return server
 
 
 def get_protocol_handler(server: Server) -> ProtocolHandler:
-    """Get the protocol handler from a server instance.
-
-    Args:
-        server: Server instance created by create_mcp_server.
-
-    Returns:
-        The ProtocolHandler associated with the server.
-
-    Raises:
-        AttributeError: If server was not created with create_mcp_server.
-    """
+    """从 `Server` 实例中取回关联的协议处理器。"""
     return server._protocol_handler  # type: ignore[attr-defined]

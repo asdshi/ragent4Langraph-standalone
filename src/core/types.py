@@ -1,15 +1,15 @@
-"""Core data types and contracts for the entire pipeline.
+"""全链路核心数据类型与契约定义。
 
-This module defines the fundamental data structures used across all pipeline stages:
-- ingestion (loaders, transforms, embedding, storage)
-- retrieval (query engine, search, reranking)
-- mcp_server (tools, response formatting)
+本模块集中定义各阶段共享的数据结构：
+- ingestion：加载、切块、变换、编码、存储。
+- retrieval：查询预处理、检索、融合、重排。
+- mcp_server：工具出参与响应封装。
 
-Design Principles:
-- Centralized contracts: All stages use these types to avoid coupling
-- Serializable: All types support dict/JSON conversion
-- Extensible metadata: Minimum required fields with flexible extension
-- Type-safe: Full type hints for static analysis
+设计原则：
+- 契约集中：跨模块通过稳定类型交互，减少隐式耦合。
+- 可序列化：统一支持 dict/JSON 转换。
+- 元数据可扩展：在保留必填字段前提下允许业务扩展。
+- 类型安全：完整注解，利于静态分析与重构。
 """
 
 from dataclasses import dataclass, field, asdict
@@ -18,45 +18,16 @@ from typing import Dict, Any, List, Optional
 
 @dataclass
 class Document:
-    """Represents a raw document loaded from source.
-    
-    This is the output of Loaders (e.g., PDF Loader) before splitting.
-    
-    Attributes:
-        id: Unique identifier for the document (e.g., file hash or path-based ID)
-        text: Document content in standardized Markdown format.
-              Images are represented as placeholders: [IMAGE: {image_id}]
-        metadata: Document-level metadata including:
-            - source_path (required): Original file path
-            - doc_type: Document type (e.g., 'pdf', 'markdown')
-            - title: Document title extracted or inferred
-            - page_count: Total pages (if applicable)
-            - images: List of image references (see Images Field Specification below)
-            - Any other custom metadata
-    
-    Images Field Specification (metadata.images):
-        Structure: List[{"id": str, "path": str, "page": int, "text_offset": int, 
-                        "text_length": int, "position": dict}]
-        Fields:
-            - id: Unique image identifier (format: {doc_hash}_{page}_{seq})
-            - path: Image file storage path (convention: data/images/{collection}/{image_id}.png)
-            - page: Page number in original document (optional, for paginated docs like PDF)
-            - text_offset: Starting character position of placeholder in Document.text (0-based)
-            - text_length: Length of placeholder string (typically len("[IMAGE: {image_id}]"))
-            - position: Physical position info in original doc (optional, e.g., PDF coords, pixel position)
-        Note: text_offset and text_length enable precise placeholder location, 
-              supporting scenarios where the same image appears multiple times
-    
-    Example:
-        >>> doc = Document(
-        ...     id="doc_abc123",
-        ...     text="# Title\\n\\nContent...",
-        ...     metadata={
-        ...         "source_path": "data/documents/report.pdf",
-        ...         "doc_type": "pdf",
-        ...         "title": "Annual Report 2025"
-        ...     }
-        ... )
+    """原始文档对象（加载阶段输出，切块前输入）。
+
+关键字段：
+- id: 文档唯一标识（哈希或路径映射 ID）。
+- text: 标准化文本内容（图片以 `[IMAGE:{id}]` 占位）。
+- metadata: 文档级元数据，至少包含 `source_path`。
+
+说明：
+- `metadata.images` 可记录图片 ID、路径、页码和占位偏移，
+  便于后续定位同图多次出现等场景。
     """
     
     id: str
@@ -64,7 +35,7 @@ class Document:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Validate required metadata fields."""
+        """校验必需元数据字段。"""
         if "source_path" not in self.metadata:
             raise ValueError("Document metadata must contain 'source_path'")
     
@@ -80,42 +51,11 @@ class Document:
 
 @dataclass
 class Chunk:
-    """Represents a text chunk after splitting a Document.
-    
-    This is the output of Splitters and input to Transform pipeline.
-    Each chunk maintains traceability to its source document.
-    
-    Attributes:
-        id: Unique chunk identifier (e.g., hash-based or sequential)
-        text: Chunk content (subset of original document text).
-              Images are represented as placeholders: [IMAGE: {image_id}]
-        metadata: Chunk-level metadata inherited and extended from Document:
-            - source_path (required): Original file path
-            - chunk_index: Sequential position in document (0-based)
-            - start_offset: Character offset in original document (optional)
-            - end_offset: Character offset in original document (optional)
-            - source_ref: Reference to parent document ID (optional)
-            - images: Subset of Document.images that fall within this chunk (optional)
-            - Any document-level metadata propagated from Document
-        start_offset: Starting character position in original document (optional)
-        end_offset: Ending character position in original document (optional)
-        source_ref: Reference to parent Document.id (optional)
-    
-    Note: If chunk contains image placeholders, metadata.images should contain
-          only the image references relevant to this chunk's text range.
-    
-    Example:
-        >>> chunk = Chunk(
-        ...     id="chunk_abc123_001",
-        ...     text="## Section 1\\n\\nFirst paragraph...",
-        ...     metadata={
-        ...         "source_path": "data/documents/report.pdf",
-        ...         "chunk_index": 0,
-        ...         "page": 1
-        ...     },
-        ...     start_offset=0,
-        ...     end_offset=150
-        ... )
+    """文本切块对象（切块阶段输出，变换阶段输入）。
+
+关键约束：
+- 通过 `source_path` / `source_ref` 保持可追溯性。
+- `metadata.images` 仅建议保留当前 chunk 相关图片引用。
     """
     
     id: str
@@ -126,7 +66,7 @@ class Chunk:
     source_ref: Optional[str] = None
     
     def __post_init__(self):
-        """Validate required metadata fields."""
+        """校验必需元数据字段。"""
         if "source_path" not in self.metadata:
             raise ValueError("Chunk metadata must contain 'source_path'")
     
@@ -142,41 +82,13 @@ class Chunk:
 
 @dataclass
 class ChunkRecord:
-    """Represents a fully processed chunk ready for storage and retrieval.
-    
-    This is the output of the embedding pipeline and the data structure
-    stored in vector databases. It extends Chunk with vector representations.
-    
-    Attributes:
-        id: Unique chunk identifier (must be stable for idempotent upsert)
-        text: Chunk content (same as Chunk.text).
-              Images are represented as placeholders: [IMAGE: {image_id}]
-        metadata: Extended metadata including:
-            - source_path (required): Original file path
-            - chunk_index: Sequential position
-            - All metadata from Chunk
-            - images: Image references from Chunk (see Document.images specification)
-            - Any enrichment from Transform pipeline (title, summary, tags)
-            - image_captions: Dict[image_id, caption_text] if multimodal enrichment applied
-        dense_vector: Dense embedding vector (e.g., from OpenAI, BGE)
-        sparse_vector: Sparse vector for BM25/keyword matching (optional)
-    
-    Note: Image captions generated by ImageCaptioner are stored in metadata.image_captions
-          as a dictionary mapping image_id to generated caption text.
-    
-    Example:
-        >>> record = ChunkRecord(
-        ...     id="chunk_abc123_001",
-        ...     text="## Section 1\\n\\nFirst paragraph...",
-        ...     metadata={
-        ...         "source_path": "data/documents/report.pdf",
-        ...         "chunk_index": 0,
-        ...         "title": "Introduction",
-        ...         "summary": "Overview of project goals"
-        ...     },
-        ...     dense_vector=[0.1, 0.2, ..., 0.3],
-        ...     sparse_vector={"word1": 0.5, "word2": 0.3}
-        ... )
+    """可入库切块记录（变换/编码后产物）。
+
+相较 `Chunk` 增加：
+- dense_vector：稠密向量。
+- sparse_vector：稀疏向量（如 BM25 权重映射）。
+
+该结构通常直接用于向量库持久化与检索返回映射。
     """
     
     id: str
@@ -186,7 +98,7 @@ class ChunkRecord:
     sparse_vector: Optional[Dict[str, float]] = None
     
     def __post_init__(self):
-        """Validate required metadata fields."""
+        """校验必需元数据字段。"""
         if "source_path" not in self.metadata:
             raise ValueError("ChunkRecord metadata must contain 'source_path'")
     
@@ -202,16 +114,7 @@ class ChunkRecord:
     @classmethod
     def from_chunk(cls, chunk: Chunk, dense_vector: Optional[List[float]] = None,
                    sparse_vector: Optional[Dict[str, float]] = None) -> "ChunkRecord":
-        """Create ChunkRecord from a Chunk with vectors.
-        
-        Args:
-            chunk: Source Chunk object
-            dense_vector: Dense embedding vector
-            sparse_vector: Sparse vector representation
-            
-        Returns:
-            ChunkRecord with all fields populated from chunk
-        """
+        """由 `Chunk` 与向量结果构建 `ChunkRecord`。"""
         return cls(
             id=chunk.id,
             text=chunk.text,
@@ -229,23 +132,10 @@ SparseVector = Dict[str, float]
 
 @dataclass
 class ProcessedQuery:
-    """Represents a processed query ready for retrieval.
-    
-    This is the output of QueryProcessor, containing extracted keywords
-    and parsed filters for downstream Dense/Sparse retrievers.
-    
-    Attributes:
-        original_query: The raw user query string
-        keywords: List of extracted keywords after stopword removal
-        filters: Dictionary of filter conditions (e.g., {"collection": "api-docs"})
-        expanded_terms: Optional list of synonyms/expanded terms (for future use)
-    
-    Example:
-        >>> pq = ProcessedQuery(
-        ...     original_query="如何配置 Azure OpenAI？",
-        ...     keywords=["配置", "Azure", "OpenAI"],
-        ...     filters={"collection": "docs"}
-        ... )
+    """查询预处理结果对象。
+
+包含关键词抽取、过滤条件解析及可选扩展词，
+供 dense/sparse/hybrid 检索器复用。
     """
     
     original_query: str
@@ -265,28 +155,10 @@ class ProcessedQuery:
 
 @dataclass
 class RetrievalResult:
-    """Represents a single retrieval result from Dense/Sparse retrievers.
-    
-    This is the output of DenseRetriever, SparseRetriever, and HybridSearch,
-    providing a unified contract for retrieval results across all search methods.
-    
-    Attributes:
-        chunk_id: Unique identifier for the retrieved chunk
-        score: Relevance score (higher = more relevant, normalized to [0, 1])
-        text: The actual text content of the retrieved chunk
-        metadata: Associated metadata (source_path, chunk_index, title, etc.)
-    
-    Example:
-        >>> result = RetrievalResult(
-        ...     chunk_id="doc1_chunk_003",
-        ...     score=0.85,
-        ...     text="Azure OpenAI 配置步骤如下...",
-        ...     metadata={
-        ...         "source_path": "docs/azure-guide.pdf",
-        ...         "chunk_index": 3,
-        ...         "title": "Azure Configuration"
-        ...     }
-        ... )
+    """统一检索结果对象。
+
+用于承接 dense/sparse/hybrid 各检索链路输出，
+便于后续重排、评测与展示层处理。
     """
     
     chunk_id: str
@@ -295,7 +167,7 @@ class RetrievalResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Validate fields after initialization."""
+        """初始化后执行字段合法性校验。"""
         if not self.chunk_id:
             raise ValueError("chunk_id cannot be empty")
         if not isinstance(self.score, (int, float)):

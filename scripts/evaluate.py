@@ -1,25 +1,15 @@
 #!/usr/bin/env python
-"""Evaluation script for Modular RAG MCP Server.
+"""评测命令行脚本。
 
-Runs batch evaluation against a golden test set and outputs a metrics report.
+用途：
+- 基于金标测试集批量评估检索/问答效果。
+- 输出聚合指标与逐条 query 结果。
+- 支持文本与 JSON 两种输出形式。
 
-Usage:
-    # Run with default settings (custom evaluator)
-    python scripts/evaluate.py
-
-    # Specify a custom golden test set
-    python scripts/evaluate.py --test-set path/to/golden.json
-
-    # Use a specific collection
-    python scripts/evaluate.py --collection technical_docs
-
-    # JSON output
-    python scripts/evaluate.py --json
-
-Exit codes:
-    0 - Success
-    1 - Evaluation failure
-    2 - Configuration error
+退出码：
+- 0: 成功。
+- 1: 评测执行失败。
+- 2: 配置或组件初始化失败。
 """
 
 from __future__ import annotations
@@ -29,19 +19,19 @@ import json
 import sys
 from pathlib import Path
 
-# Set UTF-8 encoding for Windows console
+# Windows 控制台设置 UTF-8，保证日志和报告显示正常。
 if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-# Add project root to path
+# 注入项目根目录，支持脚本模式直接运行。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
+    """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         description="Run RAG evaluation against a golden test set."
     )
@@ -75,7 +65,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Main entry point."""
+    """脚本主入口。"""
     args = parse_args()
 
     try:
@@ -88,7 +78,7 @@ def main() -> int:
         print(f"❌ Configuration error: {exc}", file=sys.stderr)
         return 2
 
-    # Create evaluator from config
+    # 1) 依据配置构建评测器。
     try:
         evaluator = EvaluatorFactory.create(settings)
         evaluator_name = type(evaluator).__name__
@@ -96,7 +86,7 @@ def main() -> int:
         print(f"❌ Failed to create evaluator: {exc}", file=sys.stderr)
         return 2
 
-    # Create HybridSearch (unless --no-search)
+    # 2) 构建检索链路（--no-search 时跳过，用于离线/模拟评测）。
     hybrid_search = None
     if not args.no_search:
         try:
@@ -138,7 +128,7 @@ def main() -> int:
         except Exception as exc:
             print(f"⚠️  Failed to initialize search (running without retrieval): {exc}")
 
-    # Create and run EvalRunner
+    # 3) 执行评测。
     runner = EvalRunner(
         settings=settings,
         hybrid_search=hybrid_search,
@@ -159,7 +149,7 @@ def main() -> int:
         print(f"❌ Evaluation failed: {exc}", file=sys.stderr)
         return 1
 
-    # Output results
+    # 4) 输出评测报告。
     if args.json:
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     else:
@@ -169,7 +159,7 @@ def main() -> int:
 
 
 def _print_report(report) -> None:
-    """Print formatted evaluation report."""
+    """打印格式化评测报告。"""
     print("=" * 60)
     print("  EVALUATION REPORT")
     print("=" * 60)
@@ -179,7 +169,7 @@ def _print_report(report) -> None:
     print(f"  Time:      {report.total_elapsed_ms:.0f} ms")
     print()
 
-    # Aggregate metrics
+    # 聚合指标
     print("─" * 60)
     print("  AGGREGATE METRICS")
     print("─" * 60)
@@ -191,7 +181,7 @@ def _print_report(report) -> None:
         print("  (no metrics computed)")
     print()
 
-    # Per-query details
+    # 每条 query 详情
     print("─" * 60)
     print("  PER-QUERY RESULTS")
     print("─" * 60)

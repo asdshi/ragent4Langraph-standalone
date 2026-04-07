@@ -1,23 +1,15 @@
 #!/usr/bin/env python
-"""Query script for the Modular RAG MCP Server.
+"""查询命令行脚本。
 
-This script provides a command-line interface for querying the knowledge hub
-using HybridSearch (Dense + Sparse + RRF) with optional reranking.
+功能：
+- 使用 HybridSearch（Dense + Sparse + RRF）执行检索。
+- 支持可选 rerank。
+- 支持 verbose 输出中间结果，便于调参与排障。
 
-Usage:
-    # Run a single query
-    python scripts/query.py --query "Azure OpenAI 配置步骤" --collection technical_docs
-
-    # Verbose mode (show dense/sparse/fusion/rerank results)
-    python scripts/query.py --query "RRF 是什么" --verbose
-
-    # Disable reranking
-    python scripts/query.py --query "RRF 是什么" --no-rerank
-
-Exit codes:
-    0 - Success
-    1 - Query failure
-    2 - Configuration error
+退出码：
+- 0: 成功。
+- 1: 查询失败。
+- 2: 配置或初始化失败。
 """
 
 import argparse
@@ -25,18 +17,18 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Ensure project root is on sys.path
+# 将仓库根目录加入搜索路径，保证脚本可独立运行。
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-# Set UTF-8 encoding for Windows console
+# Windows 终端统一 UTF-8 输出，避免中文乱码。
 if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# Ensure project root is in path for imports
+# 再次兜底注入项目根目录，兼容不同调用方式。
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -56,7 +48,7 @@ logger = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
+    """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         description="Query documents from the Modular RAG knowledge hub.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -110,6 +102,7 @@ def _format_filters(filters: Dict[str, Any]) -> str:
 
 
 def _print_results(results: List[Any], top_k: int, title: str = "RESULTS") -> None:
+    """以可读形式打印检索结果列表。"""
     print("\n" + "=" * 60)
     print(f"{title} (top_k={top_k}, returned={len(results)})")
     print("=" * 60)
@@ -133,6 +126,7 @@ def _print_results(results: List[Any], top_k: int, title: str = "RESULTS") -> No
 
 
 def _build_components(settings, collection: str):
+    """按 collection 构建检索链路组件。"""
     vector_store = VectorStoreFactory.create(
         settings,
         collection_name=collection,
@@ -151,7 +145,7 @@ def _build_components(settings, collection: str):
         bm25_indexer=bm25_indexer,
         vector_store=vector_store,
     )
-    # Ensure sparse retriever queries the correct collection index
+    # 显式绑定集合，避免误查默认 BM25 索引。
     sparse_retriever.default_collection = collection
 
     query_processor = QueryProcessor()
@@ -175,6 +169,7 @@ def _run_query(
     use_rerank: bool,
     verbose: bool,
 ) -> int:
+    """执行单次查询并打印结果，返回脚本退出码。"""
     trace = TraceContext(trace_type="query")
     trace.metadata["query"] = query[:200]
     trace.metadata["top_k"] = top_k
@@ -217,7 +212,7 @@ def _run_query(
         print("[INFO] 未找到相关文档，请先运行 ingest.py 摄取数据。")
         return 0
 
-    # Optional reranking
+    # 可选重排：在融合结果基础上进一步优化排序。
     if use_rerank and reranker.is_enabled:
         try:
             rerank_result = reranker.rerank(query=query, results=results, top_k=top_k, trace=trace)
@@ -240,9 +235,10 @@ def _run_query(
 
 
 def main() -> int:
+    """脚本主入口。"""
     args = parse_args()
 
-    # Load configuration
+    # 1) 加载配置
     try:
         config_path = Path(args.config)
         if not config_path.exists():
@@ -267,7 +263,7 @@ def main() -> int:
 
     use_rerank = not args.no_rerank
 
-    # Single-query mode
+    # 2) 单轮查询模式
     return _run_query(
         hybrid_search=hybrid_search,
         reranker=reranker,

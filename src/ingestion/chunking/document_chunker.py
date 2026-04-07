@@ -114,6 +114,7 @@ class DocumentChunker:
             raise ValueError(f"Document {document.id} has no text content to split")
         
         # Step 1: Use underlying splitter to get text fragments
+        # 先切割成文本块儿
         text_fragments = self._splitter.split_text(document.text)
         
         if not text_fragments:

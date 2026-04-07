@@ -1,8 +1,13 @@
-"""
-Modular RAG MCP Server - Main Entry Point
+"""Modular RAG MCP Server 主入口。
 
-This is the entry point for the MCP Server. It initializes the configuration,
-sets up logging, and starts the server.
+该文件负责应用启动最小闭环：
+1. 读取并校验配置文件。
+2. 初始化日志系统。
+3. 输出启动阶段信息并返回进程退出码。
+
+说明：
+- 本入口当前主要用于配置验证与启动占位。
+- MCP 的 stdio 服务器入口在 `src/mcp_server/server.py` 中。
 """
 
 import sys
@@ -13,11 +18,11 @@ from src.observability.logger import get_logger
 
 
 def main() -> int:
-    """
-    Main entry point for the MCP Server.
-    
-    Returns:
-        int: Exit code (0 for success, non-zero for failure)
+    """程序主函数。
+
+    返回值约定：
+    - 0: 启动前检查通过（配置可用）。
+    - 非 0: 启动前检查失败（如配置缺失或格式错误）。
     """
     print("Modular RAG MCP Server - Starting...")
 

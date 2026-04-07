@@ -65,6 +65,8 @@
 
 > 📖 详细架构设计、模块说明和任务排期请参阅 [DEV_SPEC.md](DEV_SPEC.md)
 
+> 📘 接口文档请参阅 [docs/api.md](docs/api.md)
+
 ---
 
 ## 📂 分支说明

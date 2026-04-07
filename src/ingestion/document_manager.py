@@ -1,13 +1,14 @@
-"""Cross-store document lifecycle management.
+"""跨存储文档生命周期管理。
 
-This module provides a single entry-point for listing, inspecting, and
-deleting documents across all four storage backends (ChromaDB, BM25,
-ImageStorage, FileIntegrityChecker).
+该模块提供统一入口，在多个后端之间协同完成：
+- 列出文档（含分块/图片统计）。
+- 查询文档详情（分块 ID、图片 ID）。
+- 删除文档（级联 Chroma、BM25、图片索引、完整性记录）。
 
-Design Principles:
-- Coordinated: one call cascades into all relevant stores.
-- Fail-safe: partial failures are reported but do not abort remaining stores.
-- Read-only safe: list / stats / detail methods never mutate data.
+设计原则：
+- 协同一致：一次调用触发多存储联动。
+- 容错优先：局部失败不阻断剩余清理步骤。
+- 读写分离：查询类接口不产生副作用。
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DocumentInfo:
-    """Summary information about an ingested document."""
+    """已摄取文档的摘要信息。"""
 
     source_path: str
     source_hash: str
@@ -37,7 +38,7 @@ class DocumentInfo:
 
 @dataclass
 class DocumentDetail(DocumentInfo):
-    """Extended document info including chunk IDs and image IDs."""
+    """文档详情信息（含 chunk/image 标识列表）。"""
 
     chunk_ids: List[str] = field(default_factory=list)
     image_ids: List[str] = field(default_factory=list)
@@ -45,7 +46,7 @@ class DocumentDetail(DocumentInfo):
 
 @dataclass
 class DeleteResult:
-    """Outcome of a delete_document operation."""
+    """删除操作结果。"""
 
     success: bool
     chunks_deleted: int = 0
@@ -57,7 +58,7 @@ class DeleteResult:
 
 @dataclass
 class CollectionStats:
-    """Aggregate statistics for a collection."""
+    """集合级聚合统计。"""
 
     collection: Optional[str] = None
     document_count: int = 0
@@ -70,13 +71,13 @@ class CollectionStats:
 # ---------------------------------------------------------------------------
 
 class DocumentManager:
-    """Coordinate document lifecycle across all storage backends.
+    """在多后端之间协调文档生命周期。
 
-    Args:
-        chroma_store: ChromaStore instance (vector store).
-        bm25_indexer: BM25Indexer instance (sparse index).
-        image_storage: ImageStorage instance (image files + SQLite index).
-        file_integrity: SQLiteIntegrityChecker instance (ingestion history).
+参数：
+- chroma_store: 向量存储。
+- bm25_indexer: 稀疏索引存储。
+- image_storage: 图片存储与索引。
+- file_integrity: 摄取历史与文件完整性记录。
     """
 
     def __init__(
@@ -98,17 +99,7 @@ class DocumentManager:
     def list_documents(
         self, collection: Optional[str] = None
     ) -> List[DocumentInfo]:
-        """Return a list of ingested documents.
-
-        Combines information from the integrity checker (source_path,
-        hash, processed_at) with counts from ChromaDB and ImageStorage.
-
-        Args:
-            collection: Optional collection filter.
-
-        Returns:
-            List of ``DocumentInfo`` objects.
-        """
+        """列出文档并汇总统计信息。"""
         records = self.integrity.list_processed(collection)
 
         docs: List[DocumentInfo] = []
@@ -117,10 +108,10 @@ class DocumentManager:
             source_path = rec["file_path"]
             coll = rec.get("collection")
 
-            # Count chunks in Chroma
+            # 统计向量库中的分块数量
             chunk_count = self._count_chunks(source_hash)
 
-            # Count images
+            # 统计图片数量
             image_count = self._count_images(source_hash)
 
             docs.append(
@@ -141,18 +132,8 @@ class DocumentManager:
     # ------------------------------------------------------------------
 
     def get_document_detail(self, doc_id: str) -> Optional[DocumentDetail]:
-        """Get detailed information about a single document.
-
-        *doc_id* is matched against the ``source_hash`` stored in the
-        integrity checker.
-
-        Args:
-            doc_id: The document's source_hash.
-
-        Returns:
-            ``DocumentDetail`` with chunk/image IDs, or *None* if not found.
-        """
-        # Look up integrity record
+        """获取单文档详情。"""
+        # 先通过完整性记录定位文档主键（source_hash）
         all_records = self.integrity.list_processed()
         record = None
         for rec in all_records:
@@ -165,10 +146,10 @@ class DocumentManager:
 
         source_hash = record["file_hash"]
 
-        # Collect chunk IDs from Chroma
+        # 汇总分块 ID
         chunk_ids = self._get_chunk_ids(source_hash)
 
-        # Collect image IDs
+        # 汇总图片 ID
         image_ids = self._get_image_ids(source_hash)
 
         return DocumentDetail(
@@ -192,30 +173,10 @@ class DocumentManager:
         collection: str = "default",
         source_hash: Optional[str] = None,
     ) -> DeleteResult:
-        """Delete a document from all storage backends.
-
-        Coordinates deletion across ChromaDB, BM25, ImageStorage, and
-        FileIntegrity.  Partial failures are captured in
-        ``DeleteResult.errors`` but do not prevent remaining stores
-        from being cleaned.
-
-        The document is identified by its *source_hash*.  When the hash
-        is not supplied the method tries to compute it from the file;
-        if the file no longer exists it falls back to looking up the
-        hash from the integrity records by path.
-
-        Args:
-            source_path: Original filesystem path of the document.
-            collection: Collection the document belongs to.
-            source_hash: Pre-computed SHA-256 hash.  When provided the
-                method will not attempt to read the source file.
-
-        Returns:
-            ``DeleteResult`` summarising what was cleaned.
-        """
+        """跨后端级联删除文档。"""
         result = DeleteResult(success=True)
 
-        # Resolve hash – prefer caller-supplied, then file, then DB lookup
+        # 优先使用外部传入 hash；否则尝试读文件计算；最后回退到历史记录反查。
         if source_hash is None:
             try:
                 source_hash = self.integrity.compute_sha256(source_path)
@@ -226,7 +187,7 @@ class DocumentManager:
                     result.errors.append(f"Cannot identify document: {e}")
                     return result
 
-        # 1. ChromaDB – delete chunks matching source_hash
+        # 1) 向量库：删除属于该文档 hash 的全部分块
         try:
             count = self.chroma.delete_by_metadata(
                 {"doc_hash": source_hash}
@@ -235,7 +196,7 @@ class DocumentManager:
         except Exception as e:
             result.errors.append(f"ChromaDB delete failed: {e}")
 
-        # 2. BM25 – remove postings for this document
+        # 2) BM25：删除该文档倒排记录
         try:
             result.bm25_removed = self.bm25.remove_document(
                 source_hash, collection
@@ -243,7 +204,7 @@ class DocumentManager:
         except Exception as e:
             result.errors.append(f"BM25 remove failed: {e}")
 
-        # 3. ImageStorage – delete images by doc_hash
+        # 3) 图片索引：按文档 hash 清理图片及索引
         try:
             images = self.images.list_images(doc_hash=source_hash)
             deleted_imgs = 0
@@ -254,7 +215,7 @@ class DocumentManager:
         except Exception as e:
             result.errors.append(f"ImageStorage delete failed: {e}")
 
-        # 4. FileIntegrity – remove the ingestion record
+        # 4) 完整性记录：删除摄取历史
         try:
             result.integrity_removed = self.integrity.remove_record(
                 source_hash
@@ -274,15 +235,7 @@ class DocumentManager:
     def get_collection_stats(
         self, collection: Optional[str] = None
     ) -> CollectionStats:
-        """Return aggregate statistics for a collection.
-
-        Args:
-            collection: Collection name.  When *None*, stats span
-                all collections.
-
-        Returns:
-            ``CollectionStats`` dataclass.
-        """
+        """获取集合聚合统计。"""
         docs = self.list_documents(collection)
         chunk_total = sum(d.chunk_count for d in docs)
         image_total = sum(d.image_count for d in docs)
@@ -299,7 +252,7 @@ class DocumentManager:
     # ------------------------------------------------------------------
 
     def _count_chunks(self, source_hash: str) -> int:
-        """Count chunks in Chroma that belong to *source_hash*."""
+        """统计指定文档 hash 的分块数。"""
         try:
             results = self.chroma.collection.get(
                 where={"doc_hash": source_hash}, include=[]
@@ -309,7 +262,7 @@ class DocumentManager:
             return 0
 
     def _get_chunk_ids(self, source_hash: str) -> List[str]:
-        """Return chunk IDs from Chroma matching *source_hash*."""
+        """获取指定文档 hash 的分块 ID 列表。"""
         try:
             results = self.chroma.collection.get(
                 where={"doc_hash": source_hash}, include=[]
@@ -319,14 +272,14 @@ class DocumentManager:
             return []
 
     def _count_images(self, source_hash: str) -> int:
-        """Count images belonging to *source_hash*."""
+        """统计指定文档 hash 的图片数量。"""
         try:
             return len(self.images.list_images(doc_hash=source_hash))
         except Exception:
             return 0
 
     def _get_image_ids(self, source_hash: str) -> List[str]:
-        """Return image IDs belonging to *source_hash*."""
+        """获取指定文档 hash 的图片 ID 列表。"""
         try:
             imgs = self.images.list_images(doc_hash=source_hash)
             return [img["image_id"] for img in imgs]
@@ -334,7 +287,7 @@ class DocumentManager:
             return []
 
     def _hash_from_path(self, source_path: str) -> Optional[str]:
-        """Try to find a source_hash from integrity records by path."""
+        """通过历史记录从文件路径反查 source_hash。"""
         try:
             for rec in self.integrity.list_processed():
                 if rec["file_path"] == source_path:

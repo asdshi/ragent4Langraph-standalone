@@ -1,8 +1,10 @@
-"""MCP Server entry point using official MCP SDK.
+"""MCP Server 启动入口（基于官方 Python MCP SDK）。
 
-This module implements the MCP server using the official Python MCP SDK
-with stdio transport. It ensures stdout only contains protocol messages
-while all logs go to stderr.
+该模块使用 stdio 作为传输层：
+- stdout 仅允许输出 JSON-RPC 协议消息。
+- 所有日志统一重定向到 stderr，避免污染协议流。
+
+此外，本模块在启动阶段预加载重量级依赖，降低线程场景下的导入锁竞争风险。
 """
 
 from __future__ import annotations
@@ -23,10 +25,10 @@ SERVER_VERSION = "0.1.0"
 
 
 def _redirect_all_loggers_to_stderr() -> None:
-    """Redirect all root logger handlers to stderr.
+    """将根日志处理器重定向到 stderr。
 
-    MCP stdio transport reserves stdout for JSON-RPC messages.
-    Any logging to stdout corrupts the protocol stream.
+    原因：MCP stdio 协议把 stdout 作为通信信道，
+    一旦日志写入 stdout，会直接破坏 JSON-RPC 报文边界。
     """
     import logging as _logging
 
@@ -45,19 +47,17 @@ def _redirect_all_loggers_to_stderr() -> None:
 
 
 def _preload_heavy_imports() -> None:
-    """Eagerly import heavy third-party modules in the **main thread**.
+        """在主线程中预加载重量级依赖。
 
-    MCP SDK uses anyio + background threads for stdin/stdout I/O.
-    When a tool handler runs ``asyncio.to_thread(fn)``, *fn* executes in
-    a new worker thread.  If it tries to ``import chromadb`` (which
-    transitively pulls in onnxruntime, numpy, sqlite3 C extensions …),
-    that import can deadlock with the stdin-reader thread because both
-    compete for Python's global *import lock*.
+        背景：
+        - MCP SDK 运行后会由 anyio 管理后台线程处理 stdio I/O。
+        - 工具处理器里若再通过 `asyncio.to_thread()` 触发首次重型 import，
+            可能与 I/O 线程争用 Python 全局 import 锁，极端情况下造成卡死。
 
-    Pre-importing here – before anyio spins up its I/O threads – avoids
-    the deadlock entirely: subsequent ``import`` statements in worker
-    threads simply hit ``sys.modules`` and return immediately.
-    """
+        方案：
+        - 在服务正式进入 I/O 线程前，先在主线程完成重型模块导入。
+        - 后续线程中的 import 直接命中 `sys.modules`，避免阻塞。
+        """
     # chromadb is the heaviest culprit (onnxruntime, numpy, …)
     try:
         import chromadb  # noqa: F401
@@ -80,11 +80,7 @@ def _preload_heavy_imports() -> None:
 
 
 async def run_stdio_server_async() -> int:
-    """Run MCP server over stdio asynchronously.
-
-    Returns:
-        Exit code.
-    """
+    """以异步方式运行 MCP stdio 服务并返回退出码。"""
     # Import here to avoid import errors if mcp not installed
     import mcp.server.stdio
 
@@ -114,16 +110,12 @@ async def run_stdio_server_async() -> int:
 
 
 def run_stdio_server() -> int:
-    """Run MCP server over stdio (synchronous wrapper).
-
-    Returns:
-        Exit code.
-    """
+    """同步包装器：用于非异步调用场景。"""
     return asyncio.run(run_stdio_server_async())
 
 
 def main() -> int:
-    """Entry point for stdio MCP server."""
+    """进程入口。"""
     return run_stdio_server()
 
 
