@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, TypedDict
-
+from typing import Any, Dict, List, Optional, TypedDict, Annotated
 from pydantic import BaseModel, Field
+from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, RemoveMessage
+from langgraph.graph import add_messages
+import uuid
 
+
+# ============== API Models ==============
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User query")
@@ -27,22 +31,80 @@ class IntentResult(BaseModel):
     clarify_prompt: Optional[str] = None
 
 
+# ============== State Management ==============
+
+def ensure_message_ids(messages: List[AnyMessage]) -> List[AnyMessage]:
+    """
+    确保所有消息都有 ID。RemoveMessage 依赖 m.id 来删除消息。
+    如果消息没有 ID，会重新创建带 ID 的消息。
+    """
+    result = []
+    for m in messages:
+        if not hasattr(m, 'id') or m.id is None:
+            # 根据消息类型重新创建带 ID 的消息
+            if isinstance(m, HumanMessage):
+                new_msg = HumanMessage(content=m.content, id=str(uuid.uuid4()))
+            elif isinstance(m, AIMessage):
+                new_msg = AIMessage(content=m.content, id=str(uuid.uuid4()))
+            else:
+                # 通用处理
+                new_msg = type(m)(content=m.content, id=str(uuid.uuid4()))
+            result.append(new_msg)
+        else:
+            result.append(m)
+    return result
+
+
 class RAGState(TypedDict, total=False):
+    """
+    RAG 工作流状态定义。
+    
+    关键设计：
+    1. messages: 使用 Annotated + add_messages 管理消息列表
+       - 支持追加新消息
+       - 支持 RemoveMessage 删除旧消息（滑动窗口压缩）
+    2. summary: 滚动摘要，当消息超出限制时合并更新
+    3. _to_archive: 内部标记，本轮要归档到 MySQL 的消息（不存入 checkpoint）
+    """
+    
+    # === 核心：给模型用的记忆（会被 checkpointer 自动管理）===
+    messages: Annotated[List[AnyMessage], add_messages]
+    summary: str
+    
+    # === 对话元数据 ===
     task_id: str
     conversation_id: str
+    
+    # === 用户输入 ===
     query: str
     rewritten_query: str
     sub_queries: List[str]
     collection: Optional[str]
     top_k: int
-    recent_history: List[Dict[str, Any]]
-    memory_summary: str
-    long_term_memory: List[Dict[str, Any]]
+    
+    # === 意图识别 ===
     intent_confidence: float
     need_clarify: bool
     clarify_prompt: str
+    
+    # === 检索结果 ===
     retrieval_context: str
     retrieval_contexts: List[str]
+    
+    # === 生成结果 ===
     final_answer: str
     used_model: str
+    
+    # === 追踪 ===
     trace_events: List[Dict[str, Any]]
+    
+    # === 内部临时状态（不会存入 checkpoint）===
+    _to_archive: List[Dict[str, Any]]  # 本轮要归档的消息
+
+
+class ArchivedMessage(BaseModel):
+    """归档消息的数据结构（存入 MySQL）"""
+    role: str
+    content: str
+    message_id: Optional[str] = None
+    ts: float
