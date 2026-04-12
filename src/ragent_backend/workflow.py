@@ -23,6 +23,7 @@ from src.ragent_backend.schemas import RAGState, ensure_message_ids
 from src.ragent_backend.memory_manager import RollingMemoryManager
 from src.ragent_backend.store import ConversationArchiveStore
 from src.ragent_backend.intent import detect_intent, split_parallel_subqueries
+from src.mcp_server.tools.query_knowledge_hub import QueryKnowledgeHubTool
 
 
 class RAGWorkflow:
@@ -54,6 +55,8 @@ class RAGWorkflow:
             max_messages=max_messages,
             keep_recent=keep_recent
         )
+        # 初始化 RAG 检索工具
+        self._retrieval_tool = QueryKnowledgeHubTool()
         self._compiled = self._build_graph()
 
     def _build_graph(self):
@@ -168,18 +171,48 @@ class RAGWorkflow:
         return update
 
     async def _retrieve_node(self, state: RAGState) -> Dict[str, Any]:
-        """检索节点（简化版，实际应接入 MCP）"""
-        # TODO: 接入 MCP 检索
-        # 这里简化处理，实际应该调用 MCP
+        """检索节点 - 接入真实的 RAG MCP 检索"""
+        query = state.get("rewritten_query") or state["query"]
+        conversation_id = state["conversation_id"]
+        # 构建对话级 collection 名称
+        collection = f"conv_{conversation_id}"
         
-        return {
-            "retrieval_context": f"检索结果：关于 '{state['rewritten_query']}' 的相关信息...",
-            "retrieval_contexts": ["检索结果1", "检索结果2"],
-            "trace_events": [
-                *state.get("trace_events", []),
-                {"node": "retrieve", "ts": time.time(), "ok": True}
-            ],
-        }
+        try:
+            # 调用 RAG MCP 检索工具
+            retrieval_result = await self._retrieval_tool.execute(
+                query=query,
+                collection=collection,
+                top_k=state.get("top_k", 5),
+            )
+            
+            # retrieval_result 是 MCPToolResponse 对象
+            context_text = retrieval_result.content
+            
+            return {
+                "retrieval_context": context_text,
+                "retrieval_contexts": [context_text],
+                "trace_events": [
+                    *state.get("trace_events", []),
+                    {
+                        "node": "retrieve", 
+                        "ts": time.time(), 
+                        "ok": True, 
+                        "collection": collection,
+                        "result_count": retrieval_result.metadata.get("result_count", 0) if hasattr(retrieval_result, "metadata") else 0,
+                    }
+                ],
+            }
+        except Exception as e:
+            # 检索失败时返回提示，不中断工作流
+            print(f"[Retrieve] Error: {e}")
+            return {
+                "retrieval_context": "该对话暂无文件或检索服务暂时不可用。",
+                "retrieval_contexts": [],
+                "trace_events": [
+                    *state.get("trace_events", []),
+                    {"node": "retrieve", "ts": time.time(), "ok": False, "error": str(e)}
+                ],
+            }
 
     async def _generate_node(self, state: RAGState) -> Dict[str, Any]:
         """生成回复节点"""

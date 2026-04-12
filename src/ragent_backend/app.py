@@ -1,20 +1,22 @@
 """
-RAG Backend API - 滑动窗口记忆版本
+RAG Backend API - 会话级知识库版本
 
 主要变更：
-1. 使用 SqliteSaver/PostgresSaver 作为 checkpointer
-2. 分离 ConversationArchiveStore 用于 MySQL 归档
-3. 支持滑动窗口记忆管理
+1. 每个对话有独立的 collection（conv_{conversation_id}）
+2. 支持文件上传和实时 ingest
+3. RAG 检索限定在当前对话的文件范围内
+4. 保持滑动窗口记忆管理
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 # LangGraph checkpointer
@@ -24,7 +26,8 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from src.ragent_backend.schemas import ChatRequest, ChatResponse
 from src.ragent_backend.store import build_archive_store, ConversationArchiveStore
 from src.ragent_backend.workflow import RAGWorkflow
-from src.ragent_backend.mcp_adapter import RAGMCPClient
+from src.ragent_backend.file_store import build_file_store, ConversationFileStore
+from src.ingestion.pipeline import IngestionPipeline
 
 
 def create_checkpointer():
@@ -47,19 +50,65 @@ def create_checkpointer():
     return SqliteSaver.from_conn_string(db_path)
 
 
+async def ingest_file_task(
+    file_store: ConversationFileStore,
+    conversation_id: str,
+    file_id: str,
+    file_path: str,
+    collection: str,
+) -> None:
+    """
+    后台任务：将文件 ingest 到对话的 collection
+    """
+    try:
+        # 更新状态为 ingesting
+        await file_store.update_file_status(conversation_id, file_id, "ingesting")
+        
+        # 创建 ingestion pipeline，指定 target collection
+        pipeline = IngestionPipeline(collection=collection)
+        
+        # 执行 ingest
+        result = await asyncio.to_thread(
+            pipeline.run,
+            file_path=file_path,
+        )
+        
+        # 获取 doc_id（从 result 中提取）
+        doc_id = result.doc_id if result.success else None
+        
+        # 更新状态为 ready
+        if result.success and doc_id:
+            await file_store.update_file_status(
+                conversation_id, file_id, "ready", doc_id=doc_id
+            )
+            print(f"[Ingest] File {file_id} ingested successfully to {collection}, doc_id={doc_id}")
+        else:
+            error_msg = result.error or "Unknown error"
+            await file_store.update_file_status(
+                conversation_id, file_id, "error", error_message=error_msg
+            )
+            print(f"[Ingest] Failed to ingest file {file_id}: {error_msg}")
+        
+    except Exception as e:
+        print(f"[Ingest] Failed to ingest file {file_id}: {e}")
+        await file_store.update_file_status(
+            conversation_id, file_id, "error", error_message=str(e)
+        )
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Industrial RAG Backend", 
-        version="0.2.0",
-        description="支持滑动窗口记忆的 RAG 后端"
+        title="RAG Agent Backend", 
+        version="0.3.0",
+        description="支持会话级知识库的 RAG Agent"
     )
 
     # 初始化组件
     checkpointer = create_checkpointer()
     archive_store: ConversationArchiveStore = build_archive_store()
-    mcp_client = RAGMCPClient()
+    file_store: ConversationFileStore = build_file_store()
     
-    # 初始化 LLM（这里简化，实际应该从 factory 获取）
+    # 初始化 LLM
     try:
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(
@@ -83,23 +132,111 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {
             "status": "ok",
-            "version": "0.2.0",
-            "features": ["rolling_memory", "async_archive"]
+            "version": "0.3.0",
+            "features": ["rolling_memory", "conversation_kb", "file_upload"]
         }
 
-    @app.get("/api/v1/collections")
-    async def list_collections() -> dict:
-        """列出知识库集合"""
-        collections_text = await mcp_client.list_collections(include_stats=True)
-        return {"data": collections_text}
-
+    # ==================== 文件管理 API ====================
+    
+    @app.post("/api/v1/conversations/{conversation_id}/files")
+    async def upload_file(
+        conversation_id: str,
+        file: UploadFile = File(...),
+    ) -> dict:
+        """
+        上传文件到对话
+        
+        文件会被：
+        1. 保存到磁盘
+        2. 记录到数据库
+        3. 后台异步 ingest 到对话的 collection
+        """
+        try:
+            # 读取文件内容
+            content = await file.read()
+            
+            if not content:
+                raise HTTPException(status_code=400, detail="Empty file")
+            
+            # 保存文件
+            file_info = await file_store.save_file(
+                conversation_id=conversation_id,
+                file_content=content,
+                original_filename=file.filename,
+                mime_type=file.content_type or "application/octet-stream",
+            )
+            
+            # 构建 collection 名称
+            collection = f"conv_{conversation_id}"
+            
+            # 启动后台 ingest 任务
+            asyncio.create_task(
+                ingest_file_task(
+                    file_store=file_store,
+                    conversation_id=conversation_id,
+                    file_id=file_info.file_id,
+                    file_path=file_info.file_path,
+                    collection=collection,
+                )
+            )
+            
+            return {
+                "file_id": file_info.file_id,
+                "filename": file_info.original_name,
+                "size": file_info.file_size,
+                "status": file_info.status,
+                "message": "File uploaded successfully, processing in background"
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to upload file: {e}")
+    
+    @app.get("/api/v1/conversations/{conversation_id}/files")
+    async def list_files(conversation_id: str) -> dict:
+        """列出对话的所有文件"""
+        try:
+            files = await file_store.list_files(conversation_id)
+            return {
+                "conversation_id": conversation_id,
+                "file_count": len(files),
+                "files": [
+                    {
+                        "file_id": f.file_id,
+                        "filename": f.original_name,
+                        "size": f.file_size,
+                        "status": f.status,
+                        "doc_id": f.doc_id,
+                        "created_at": f.created_at.isoformat() if f.created_at else None,
+                    }
+                    for f in files
+                ]
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list files: {e}")
+    
+    @app.delete("/api/v1/conversations/{conversation_id}/files/{file_id}")
+    async def delete_file(conversation_id: str, file_id: str) -> dict:
+        """删除对话中的文件"""
+        try:
+            success = await file_store.delete_file(conversation_id, file_id)
+            if not success:
+                raise HTTPException(status_code=404, detail="File not found")
+            return {"message": "File deleted successfully"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete file: {e}")
+    
+    # ==================== 对话 API ====================
+    
     @app.post("/api/v1/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
         """
         对话接口
         
-        使用 conversation_id 作为 thread_id 加载 checkpoint
-        实现跨轮次记忆保持
+        检索范围自动限定为当前对话的 collection（conv_{conversation_id}）
         """
         # 使用 conversation_id 作为 thread_id，或生成新的
         thread_id = request.conversation_id or os.urandom(16).hex()
@@ -109,8 +246,8 @@ def create_app() -> FastAPI:
             "query": request.query,
             "conversation_id": thread_id,
             "task_id": request.task_id or os.urandom(8).hex(),
-            "collection": request.collection,
             "top_k": request.top_k,
+            # collection 由 workflow 内部自动构建为 f"conv_{thread_id}"
         }
         
         # 运行工作流
@@ -208,6 +345,7 @@ def create_app() -> FastAPI:
     async def shutdown():
         """关闭时清理资源"""
         await archive_store.close()
+        # file_store 不需要显式关闭（没有连接池）
 
     return app
 
