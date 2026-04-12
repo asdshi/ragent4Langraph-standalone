@@ -11,7 +11,7 @@
 设计原则：
 - 配置驱动：核心参数来自 settings.yaml。
 - 可观测：每阶段输出日志与可选 trace。
-- 优雅降级：LLM 子阶段失败时尽量不中断主流程。
+- 优雅降级：LLM 子阶段失败时尽量不中断主流程。=
 - 幂等友好：同一文件未变化时可快速跳过。
 """
 
@@ -333,9 +333,12 @@ class IngestionPipeline:
             _notify("transform", 4)
             
             # 4a: Chunk Refinement
+            # 
             logger.info("  4a. Chunk Refinement...")
+            # 对切分后的文本块进行清洗+优化(段落合并,连贯性增强)，提升检索质量
             _t0_transform = time.monotonic()
             # 保留精炼前文本快照，用于 trace 对比“改写前/改写后”。
+           
             _pre_refine_texts = {c.id: c.text for c in chunks}
             chunks = self.chunk_refiner.transform(chunks, trace)
             refined_by_llm = sum(1 for c in chunks if c.metadata.get("refined_by") == "llm")
@@ -344,12 +347,14 @@ class IngestionPipeline:
             
             # 4b: Metadata Enrichment
             logger.info("  4b. Metadata Enrichment...")
+            # 从正文中提取元数据
             chunks = self.metadata_enricher.transform(chunks, trace)
             enriched_by_llm = sum(1 for c in chunks if c.metadata.get("enriched_by") == "llm")
             enriched_by_rule = sum(1 for c in chunks if c.metadata.get("enriched_by") == "rule")
             logger.info(f"      LLM enriched: {enriched_by_llm}, Rule enriched: {enriched_by_rule}")
             
             # 4c: Image Captioning
+            # 给原先的占位符添加描述
             logger.info("  4c. Image Captioning...")
             chunks = self.image_captioner.transform(chunks, trace)
             captioned = sum(1 for c in chunks if c.metadata.get("image_captions"))

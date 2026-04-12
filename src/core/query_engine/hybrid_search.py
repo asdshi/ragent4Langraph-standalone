@@ -239,6 +239,7 @@ class HybridSearch:
         logger.debug(f"HybridSearch: query='{query[:50]}...', top_k={effective_top_k}")
         
         # 第 1 步：对原始 query 进行预处理，提取后续检索需要的结构化信息。
+        # 
         _t0 = time.monotonic()
         processed_query = self._process_query(query)
         _elapsed = (time.monotonic() - _t0) * 1000.0
@@ -284,6 +285,7 @@ class HybridSearch:
             fused_results = []
         else:
             # 第 4 步：把两路召回结果融合成一个统一排序。
+            # rrf算法,score[chunk1]=sum(1/k+rank4chunk) ps:每个切快的
             fused_results = self._fuse_results(
                 dense_results=dense_results or [],
                 sparse_results=sparse_results or [],
