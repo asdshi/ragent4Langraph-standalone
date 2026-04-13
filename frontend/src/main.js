@@ -12,4 +12,12 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 }
 
 app.use(ElementPlus)
+
+// 全局属性
+import { UserFilled, ChatDotRound } from '@element-plus/icons-vue'
+app.config.globalProperties.$icons = {
+  UserFilled,
+  ChatDotRound
+}
+
 app.mount('#app')

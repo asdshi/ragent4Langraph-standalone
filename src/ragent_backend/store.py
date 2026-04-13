@@ -47,12 +47,15 @@ class ConversationArchiveStore:
 
     def __init__(self) -> None:
         self._mysql_pool = None
-        self._mysql_host = os.getenv("RAGENT_MYSQL_HOST", "127.0.0.1")
-        self._mysql_port = self._env_int("RAGENT_MYSQL_PORT", 3306)
-        self._mysql_user = os.getenv("RAGENT_MYSQL_USER", "root")
-        self._mysql_password = os.getenv("RAGENT_MYSQL_PASSWORD", "")
-        self._mysql_database = os.getenv("RAGENT_MYSQL_DATABASE", "ragent")
-        self._mysql_charset = os.getenv("RAGENT_MYSQL_CHARSET", "utf8mb4")
+        # 检查是否启用 MySQL（如果没有配置则禁用）
+        self._mysql_enabled = bool(os.getenv("RAGENT_MYSQL_HOST"))
+        if self._mysql_enabled:
+            self._mysql_host = os.getenv("RAGENT_MYSQL_HOST", "127.0.0.1")
+            self._mysql_port = self._env_int("RAGENT_MYSQL_PORT", 3306)
+            self._mysql_user = os.getenv("RAGENT_MYSQL_USER", "root")
+            self._mysql_password = os.getenv("RAGENT_MYSQL_PASSWORD", "")
+            self._mysql_database = os.getenv("RAGENT_MYSQL_DATABASE", "ragent")
+            self._mysql_charset = os.getenv("RAGENT_MYSQL_CHARSET", "utf8mb4")
 
     async def append_to_history(
         self, 
@@ -71,6 +74,9 @@ class ConversationArchiveStore:
         
         try:
             pool = await self._get_mysql_pool()
+            if pool is None:
+                # MySQL 未启用，跳过归档
+                return
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     values = [
@@ -119,7 +125,7 @@ class ConversationArchiveStore:
                 "role": row[0],
                 "content": row[1],
                 "message_id": row[2],
-                "ts": row[3]
+                "timestamp": row[3]
             }
             for row in rows
         ]
@@ -132,7 +138,10 @@ class ConversationArchiveStore:
             self._mysql_pool = None
 
     async def _get_mysql_pool(self):
-        """获取或创建 MySQL 连接池"""
+        """获取或创建 MySQL 连接池，如果禁用则返回 None"""
+        if not self._mysql_enabled:
+            return None
+            
         if self._mysql_pool is not None:
             return self._mysql_pool
         
@@ -158,6 +167,8 @@ class ConversationArchiveStore:
     async def _ensure_schema(self) -> None:
         """确保表结构存在"""
         pool = await self._get_mysql_pool()
+        if pool is None:
+            return
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(

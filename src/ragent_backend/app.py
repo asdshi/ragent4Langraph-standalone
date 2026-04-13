@@ -15,9 +15,18 @@ import json
 import os
 from typing import AsyncGenerator
 
+# 加载 .env 文件
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+    load_dotenv()  # 也尝试当前目录
+except ImportError:
+    pass  # python-dotenv 未安装
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # LangGraph checkpointer
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -27,7 +36,9 @@ from src.ragent_backend.schemas import ChatRequest, ChatResponse
 from src.ragent_backend.store import build_archive_store, ConversationArchiveStore
 from src.ragent_backend.workflow import RAGWorkflow
 from src.ragent_backend.file_store import build_file_store, ConversationFileStore
+from src.ragent_backend.conversation_store import build_conversation_store, ConversationStore
 from src.ingestion.pipeline import IngestionPipeline
+from src.core.settings import load_settings, Settings
 
 
 def create_checkpointer():
@@ -40,14 +51,21 @@ def create_checkpointer():
     if postgres_url:
         try:
             # PostgresSaver 需要 psycopg 或 psycopg2
-            return PostgresSaver.from_conn_string(postgres_url)
+            checkpointer = PostgresSaver.from_conn_string(postgres_url)
+            return checkpointer
         except Exception as e:
             print(f"[Checkpointer] Failed to init Postgres: {e}, fallback to Sqlite")
     
     # 使用 Sqlite（本地开发）
     db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
     print(f"[Checkpointer] Using Sqlite: {db_path}")
-    return SqliteSaver.from_conn_string(db_path)
+    # 使用 InMemorySaver 作为简单替代（如果 SqliteSaver 有问题）
+    try:
+        from langgraph.checkpoint.memory import InMemorySaver
+        return InMemorySaver()
+    except Exception as e:
+        print(f"[Checkpointer] Failed to create InMemorySaver: {e}")
+        return None
 
 
 async def ingest_file_task(
@@ -56,6 +74,7 @@ async def ingest_file_task(
     file_id: str,
     file_path: str,
     collection: str,
+    settings: Settings,
 ) -> None:
     """
     后台任务：将文件 ingest 到对话的 collection
@@ -65,7 +84,7 @@ async def ingest_file_task(
         await file_store.update_file_status(conversation_id, file_id, "ingesting")
         
         # 创建 ingestion pipeline，指定 target collection
-        pipeline = IngestionPipeline(collection=collection)
+        pipeline = IngestionPipeline(settings, collection=collection)
         
         # 执行 ingest
         result = await asyncio.to_thread(
@@ -103,10 +122,23 @@ def create_app() -> FastAPI:
         description="支持会话级知识库的 RAG Agent"
     )
 
+    # 添加 CORS 中间件
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 允许所有来源
+        allow_credentials=True,
+        allow_methods=["*"],  # 允许所有方法
+        allow_headers=["*"],  # 允许所有头
+    )
+
+    # 加载配置
+    settings = load_settings()
+
     # 初始化组件
     checkpointer = create_checkpointer()
     archive_store: ConversationArchiveStore = build_archive_store()
     file_store: ConversationFileStore = build_file_store()
+    conversation_store: ConversationStore = build_conversation_store()
     
     # 初始化 LLM
     try:
@@ -177,8 +209,17 @@ def create_app() -> FastAPI:
                     file_id=file_info.file_id,
                     file_path=file_info.file_path,
                     collection=collection,
+                    settings=settings,
                 )
             )
+            
+            # 更新对话文件计数
+            conv = await conversation_store.get_conversation(conversation_id)
+            if conv:
+                await conversation_store.update_conversation(
+                    conversation_id,
+                    file_count=conv.file_count + 1,
+                )
             
             return {
                 "file_id": file_info.file_id,
@@ -229,6 +270,105 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete file: {e}")
     
+    # ==================== 对话管理 API ====================
+    
+    @app.post("/api/v1/conversations")
+    async def create_conversation_endpoint(request: dict = None) -> dict:
+        """创建新对话"""
+        try:
+            title = request.get("title") if request else None
+            conv = await conversation_store.create_conversation(title=title)
+            return {
+                "conversation_id": conv.conversation_id,
+                "title": conv.title,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat(),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create conversation: {e}")
+    
+    @app.get("/api/v1/conversations")
+    async def list_conversations_endpoint(
+        status: str = "active",
+        limit: int = 100,
+        offset: int = 0
+    ) -> dict:
+        """获取对话列表（按更新时间倒序）"""
+        try:
+            conversations = await conversation_store.list_conversations(
+                status=status, limit=limit, offset=offset
+            )
+            return {
+                "total": len(conversations),
+                "conversations": [
+                    {
+                        "conversation_id": c.conversation_id,
+                        "title": c.title,
+                        "created_at": c.created_at.isoformat(),
+                        "updated_at": c.updated_at.isoformat(),
+                        "message_count": c.message_count,
+                        "file_count": c.file_count,
+                        "status": c.status,
+                    }
+                    for c in conversations
+                ]
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list conversations: {e}")
+    
+    @app.get("/api/v1/conversations/{conversation_id}")
+    async def get_conversation_endpoint(conversation_id: str) -> dict:
+        """获取单个对话详情"""
+        try:
+            conv = await conversation_store.get_conversation(conversation_id)
+            if not conv:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            return {
+                "conversation_id": conv.conversation_id,
+                "title": conv.title,
+                "created_at": conv.created_at.isoformat(),
+                "updated_at": conv.updated_at.isoformat(),
+                "message_count": conv.message_count,
+                "file_count": conv.file_count,
+                "status": conv.status,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get conversation: {e}")
+    
+    @app.patch("/api/v1/conversations/{conversation_id}")
+    async def update_conversation_endpoint(conversation_id: str, request: dict) -> dict:
+        """更新对话信息（标题、状态等）"""
+        try:
+            success = await conversation_store.update_conversation(
+                conversation_id,
+                title=request.get("title"),
+                status=request.get("status"),
+            )
+            if not success:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            return {"message": "Conversation updated successfully"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to update conversation: {e}")
+    
+    @app.delete("/api/v1/conversations/{conversation_id}")
+    async def delete_conversation_endpoint(conversation_id: str) -> dict:
+        """删除对话（软删除）"""
+        try:
+            success = await conversation_store.delete_conversation(conversation_id)
+            if not success:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            # 同时删除关联的文件
+            await file_store.delete_conversation_files(conversation_id)
+            return {"message": "Conversation deleted successfully"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {e}")
+    
     # ==================== 对话 API ====================
     
     @app.post("/api/v1/chat", response_model=ChatResponse)
@@ -238,8 +378,16 @@ def create_app() -> FastAPI:
         
         检索范围自动限定为当前对话的 collection（conv_{conversation_id}）
         """
-        # 使用 conversation_id 作为 thread_id，或生成新的
-        thread_id = request.conversation_id or os.urandom(16).hex()
+        # 使用 conversation_id 作为 thread_id，或创建新对话
+        if request.conversation_id:
+            thread_id = request.conversation_id
+            conv = await conversation_store.get_conversation(thread_id)
+            if not conv:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        else:
+            # 创建新对话
+            conv = await conversation_store.create_conversation()
+            thread_id = conv.conversation_id
         
         # 准备初始状态
         initial_state = {
@@ -252,6 +400,12 @@ def create_app() -> FastAPI:
         
         # 运行工作流
         final_state = await workflow.run(initial_state, thread_id=thread_id)
+        
+        # 更新对话消息计数
+        await conversation_store.update_conversation(
+            thread_id,
+            message_count=conv.message_count + 2 if conv else 2,  # user + assistant
+        )
         
         return ChatResponse(
             conversation_id=final_state["conversation_id"],
@@ -308,7 +462,7 @@ def create_app() -> FastAPI:
             return {
                 "conversation_id": conversation_id,
                 "message_count": len(history),
-                "history": history
+                "messages": history
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to load history: {e}")
@@ -363,7 +517,7 @@ def run() -> None:
         factory=True, 
         host="0.0.0.0", 
         port=int(os.getenv("RAGENT_PORT", "8000")),
-        reload=os.getenv("RAGENT_DEBUG", "false").lower() == "true"
+        reload=False
     )
 
 

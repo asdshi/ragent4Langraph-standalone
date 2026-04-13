@@ -23,8 +23,61 @@
           </el-button>
         </div>
         
+        <!-- 对话列表区域 -->
+        <div class="conversation-section">
+          <div class="section-title">
+            <el-icon><ChatSquare /></el-icon>
+            <span>历史对话</span>
+            <el-button 
+              v-if="conversations.length > 0"
+              link 
+              size="small" 
+              @click="refreshConversations"
+              class="refresh-btn"
+            >
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </div>
+          
+          <div class="conversation-list">
+            <div v-if="conversations.length === 0" class="empty-conversations">
+              <el-icon size="24" color="#cbd5e1"><ChatDotRound /></el-icon>
+              <p>暂无历史对话</p>
+            </div>
+            
+            <div
+              v-for="conv in conversations"
+              :key="conv.conversation_id"
+              :class="['conversation-item', { active: conversationId === conv.conversation_id }]"
+              @click="switchConversation(conv.conversation_id)"
+            >
+              <div class="conversation-icon">
+                <el-icon><ChatDotRound /></el-icon>
+              </div>
+              <div class="conversation-info">
+                <div class="conversation-title" :title="conv.title">{{ conv.title }}</div>
+                <div class="conversation-meta">
+                  <span>{{ formatTime(conv.updated_at) }}</span>
+                  <span v-if="conv.message_count > 0" class="message-badge">
+                    {{ conv.message_count }} 条消息
+                  </span>
+                </div>
+              </div>
+              <el-button
+                type="danger"
+                link
+                size="small"
+                class="delete-conv-btn"
+                @click.stop="deleteConversation(conv.conversation_id)"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </div>
+        </div>
+        
         <!-- 文件管理区域 -->
-        <div class="file-section">
+        <div v-if="conversationId" class="file-section">
           <div class="section-title">
             <el-icon><Document /></el-icon>
             <span>文件管理</span>
@@ -148,9 +201,11 @@
             <div class="message-avatar">
               <el-avatar 
                 :size="36" 
-                :icon="msg.role === 'user' ? UserFilled : ChatDotRound"
                 :class="msg.role"
-              />
+              >
+                <el-icon v-if="msg.role === 'user'"><UserFilled /></el-icon>
+                <el-icon v-else><ChatDotRound /></el-icon>
+              </el-avatar>
             </div>
             
             <div class="message-content-wrapper">
@@ -179,7 +234,9 @@
           <!-- 思考中指示器 -->
           <div v-if="isTyping" class="message assistant typing">
             <div class="message-avatar">
-              <el-avatar :size="36" :icon="ChatDotRound" class="assistant" />
+              <el-avatar :size="36" class="assistant">
+              <el-icon><ChatDotRound /></el-icon>
+            </el-avatar>
             </div>
             <div class="typing-indicator">
               <span></span>
@@ -268,13 +325,14 @@ const conversationId = ref(null)
 const files = ref([])
 const messagesContainer = ref(null)
 const settingsVisible = ref(false)
+const conversations = ref([])
 
 // 设置
 const settings = reactive({
-  apiBase: 'http://localhost:8000/api/v1',
+  apiBase: '/api/v1',  // 使用相对路径，让 Vite 代理生效
   topK: 5,
-  streaming: true,
-  model: 'gpt-4o'
+  streaming: false,  // 默认关闭流式，避免 405 错误
+  model: 'qwen3.5-omni-flash'
 })
 
 const apiBase = ref(settings.apiBase)
@@ -290,6 +348,7 @@ const quickActions = [
 // ==================== 生命周期 ====================
 onMounted(() => {
   loadSettings()
+  loadConversations()
   // 加载历史对话（如果有）
   const savedConvId = localStorage.getItem('currentConversationId')
   if (savedConvId) {
@@ -323,19 +382,90 @@ function showSettings() {
   settingsVisible.value = true
 }
 
+// 加载对话列表
+async function loadConversations() {
+  try {
+    const response = await axios.get(`${settings.apiBase}/conversations`)
+    conversations.value = response.data.conversations || []
+  } catch (error) {
+    console.error('加载对话列表失败:', error)
+  }
+}
+
+// 刷新对话列表
+async function refreshConversations() {
+  await loadConversations()
+  ElMessage.success('已刷新')
+}
+
+// 切换对话
+async function switchConversation(convId) {
+  if (convId === conversationId.value) return
+  
+  conversationId.value = convId
+  messages.value = []
+  files.value = []
+  localStorage.setItem('currentConversationId', convId)
+  
+  // 加载历史消息
+  await loadHistory(convId)
+  // 加载文件
+  await loadFiles(convId)
+  
+  ElMessage.success('已切换对话')
+}
+
+// 删除对话
+async function deleteConversation(convId) {
+  try {
+    await ElMessageBox.confirm('确定要删除这个对话吗？相关的文件也会被删除。', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    await axios.delete(`${settings.apiBase}/conversations/${convId}`)
+    
+    // 从列表中移除
+    conversations.value = conversations.value.filter(c => c.conversation_id !== convId)
+    
+    // 如果删除的是当前对话，清空界面
+    if (conversationId.value === convId) {
+      conversationId.value = null
+      messages.value = []
+      files.value = []
+      localStorage.removeItem('currentConversationId')
+    }
+    
+    ElMessage.success('对话已删除')
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败: ' + (error.response?.data?.detail || error.message))
+    }
+  }
+}
+
 // 新建对话
-function startNewChat() {
-  ElMessageBox.confirm('确定要开始新对话吗？当前对话将被保存。', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    conversationId.value = null
+async function startNewChat() {
+  try {
+    // 先创建新对话
+    const response = await axios.post(`${settings.apiBase}/conversations`, {
+      title: null  // 让后端自动生成标题
+    })
+    
+    const newConv = response.data
+    conversations.value.unshift(newConv)
+    
+    // 切换到新对话
+    conversationId.value = newConv.conversation_id
     messages.value = []
     files.value = []
-    localStorage.removeItem('currentConversationId')
-    ElMessage.success('已开启新对话')
-  }).catch(() => {})
+    localStorage.setItem('currentConversationId', newConv.conversation_id)
+    
+    ElMessage.success('已创建新对话')
+  } catch (error) {
+    ElMessage.error('创建对话失败: ' + (error.response?.data?.detail || error.message))
+  }
 }
 
 // 发送消息
@@ -384,6 +514,7 @@ async function sendNormalMessage(query) {
       conversationId.value = data.conversation_id
       localStorage.setItem('currentConversationId', data.conversation_id)
       loadFiles(data.conversation_id)
+      loadConversations()  // 刷新对话列表
     }
 
     messages.value.push({
@@ -427,6 +558,7 @@ async function sendStreamMessage(query) {
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
+    let newConvId = null
 
     while (true) {
       const { done, value } = await reader.read()
@@ -441,9 +573,7 @@ async function sendStreamMessage(query) {
             const data = JSON.parse(line.slice(6))
             
             if (data.conversation_id && !conversationId.value) {
-              conversationId.value = data.conversation_id
-              localStorage.setItem('currentConversationId', data.conversation_id)
-              loadFiles(data.conversation_id)
+              newConvId = data.conversation_id
             }
             
             if (data.token) {
@@ -461,6 +591,14 @@ async function sendStreamMessage(query) {
           }
         }
       }
+    }
+    
+    // 如果有新对话ID，更新并刷新列表
+    if (newConvId) {
+      conversationId.value = newConvId
+      localStorage.setItem('currentConversationId', newConvId)
+      loadFiles(newConvId)
+      loadConversations()  // 刷新对话列表
     }
   } catch (error) {
     assistantMessage.content += '\n\n[错误: ' + error.message + ']'
@@ -563,13 +701,18 @@ async function deleteFile(fileId) {
 }
 
 async function pollFileStatus(fileId) {
-  const maxAttempts = 30
+  // 优化：延长轮询间隔，减少请求次数
+  const maxAttempts = 20       // 最多查询20次（之前30次）
+  const pollInterval = 3000    // 每3秒查询一次（之前2秒）
+  
   let attempts = 0
+  console.log(`[FilePoll] 开始轮询文件 ${fileId} 状态`)
 
   const interval = setInterval(async () => {
     attempts++
     if (attempts > maxAttempts) {
       clearInterval(interval)
+      console.log(`[FilePoll] 轮询超时，文件ID: ${fileId}`)
       return
     }
 
@@ -587,15 +730,18 @@ async function pollFileStatus(fileId) {
         
         if (file.status === 'ready' || file.status === 'error') {
           clearInterval(interval)
+          console.log(`[FilePoll] 文件处理完成，状态: ${file.status}`)
           if (file.status === 'ready') {
             ElMessage.success('文件处理完成，可以提问了！')
+          } else {
+            ElMessage.error('文件处理失败: ' + (file.error_message || '未知错误'))
           }
         }
       }
     } catch (error) {
-      console.error('轮询失败:', error)
+      console.error('[FilePoll] 轮询失败:', error)
     }
-  }, 2000)
+  }, pollInterval)
 }
 
 // ==================== 工具函数 ====================
@@ -878,6 +1024,107 @@ watch(messages, () => {
 
 .file-status {
   flex-shrink: 0;
+}
+
+/* 对话列表区域 */
+.conversation-section {
+  margin-bottom: 20px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.conversation-list {
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty-conversations {
+  text-align: center;
+  padding: 20px;
+  color: #94a3b8;
+}
+
+.empty-conversations p {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: white;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.conversation-item:hover {
+  border-color: #667eea;
+  background: #f8fafc;
+}
+
+.conversation-item.active {
+  border-color: #667eea;
+  background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+}
+
+.conversation-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.conversation-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.conversation-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+}
+
+.message-badge {
+  color: #667eea;
+}
+
+.delete-conv-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.conversation-item:hover .delete-conv-btn {
+  opacity: 1;
+}
+
+.refresh-btn {
+  margin-left: auto;
 }
 
 /* 系统信息 */

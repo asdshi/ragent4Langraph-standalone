@@ -139,12 +139,14 @@ class IngestionPipeline:
         self.integrity_checker = SQLiteIntegrityChecker(db_path=str(resolve_path("data/db/ingestion_history.db")))
         logger.info("  ✓ FileIntegrityChecker initialized")
         
-        # 阶段 2：文档加载
-        self.loader = PdfLoader(
+        # 阶段 2：文档加载（根据扩展名选择 loader）
+        self.pdf_loader = PdfLoader(
             extract_images=True,
             image_storage_dir=str(resolve_path(f"data/images/{collection}"))
         )
-        logger.info("  ✓ PdfLoader initialized")
+        from src.libs.loader.text_loader import TextLoader
+        self.text_loader = TextLoader()
+        logger.info("  ✓ Document loaders initialized (PDF + Text)")
         
         # 阶段 3：切块
         self.chunker = DocumentChunker(settings)
@@ -261,9 +263,16 @@ class IngestionPipeline:
             logger.info("\n📄 Stage 2: Document Loading")
             _notify("load", 2)
             
+            # 根据文件扩展名选择 loader
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext == '.pdf':
+                loader = self.pdf_loader
+            else:
+                loader = self.text_loader
+            
             # 统计加载耗时，便于后续性能分析。
             _t0 = time.monotonic()
-            document = self.loader.load(str(file_path))
+            document = loader.load(str(file_path))
             _elapsed = (time.monotonic() - _t0) * 1000.0
             # text_preview只看到前200个字
             text_preview = document.text[:200].replace('\n', ' ') + "..." if len(document.text) > 200 else document.text

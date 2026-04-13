@@ -3,7 +3,7 @@
 
 职责：
 1. 保存用户上传的原始文件（磁盘存储）
-2. 记录文件元数据（MySQL）
+2. 记录文件元数据（SQLite / MySQL）
 3. 管理文件生命周期（关联到对话）
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,17 +47,62 @@ class ConversationFileStore:
             └── .meta/                   # 元数据（可选）
     """
     
-    def __init__(self, upload_dir: str = "./data/uploads") -> None:
+    def __init__(self, upload_dir: str = "./data/uploads", db_path: str = "./data/db/file_store.db") -> None:
         self._upload_dir = Path(upload_dir).resolve()
         self._upload_dir.mkdir(parents=True, exist_ok=True)
         
-        # MySQL 连接（复用 store.py 的配置）
+        # 数据库配置：优先 MySQL，否则 SQLite
+        self._mysql_enabled = bool(os.getenv("RAGENT_MYSQL_HOST"))
+        self._sqlite_path = Path(db_path).resolve()
+        self._sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if self._mysql_enabled:
+            self._mysql_host = os.getenv("RAGENT_MYSQL_HOST", "127.0.0.1")
+            self._mysql_port = int(os.getenv("RAGENT_MYSQL_PORT", "3306"))
+            self._mysql_user = os.getenv("RAGENT_MYSQL_USER", "root")
+            self._mysql_password = os.getenv("RAGENT_MYSQL_PASSWORD", "")
+            self._mysql_database = os.getenv("RAGENT_MYSQL_DATABASE", "ragent")
+        
         self._mysql_pool = None
-        self._mysql_host = os.getenv("RAGENT_MYSQL_HOST", "127.0.0.1")
-        self._mysql_port = int(os.getenv("RAGENT_MYSQL_PORT", "3306"))
-        self._mysql_user = os.getenv("RAGENT_MYSQL_USER", "root")
-        self._mysql_password = os.getenv("RAGENT_MYSQL_PASSWORD", "")
-        self._mysql_database = os.getenv("RAGENT_MYSQL_DATABASE", "ragent")
+        self._ensure_sqlite_schema()
+    
+    def _get_db_connection(self):
+        """获取 SQLite 连接"""
+        conn = sqlite3.connect(str(self._sqlite_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+    
+    def _ensure_sqlite_schema(self) -> None:
+        """确保 SQLite 表结构存在"""
+        with self._get_db_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    original_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    mime_type TEXT DEFAULT 'application/octet-stream',
+                    doc_id TEXT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    error_message TEXT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conv_files 
+                ON conversation_files (conversation_id, created_at)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_file_id 
+                ON conversation_files (file_id)
+            """)
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uk_conv_file 
+                ON conversation_files (conversation_id, file_id)
+            """)
     
     async def save_file(
         self,
@@ -110,15 +156,37 @@ class ConversationFileStore:
             created_at=datetime.now(),
         )
         
-        # 保存到数据库
+        # 保存到数据库（SQLite 或 MySQL）
         await self._save_to_db(file_info)
         
         return file_info
     
     async def list_files(self, conversation_id: str) -> List[ConversationFile]:
         """列出对话的所有文件"""
+        if self._mysql_enabled:
+            return await self._list_files_mysql(conversation_id)
+        
+        # SQLite 模式
+        with self._get_db_connection() as conn:
+            cursor = conn.execute(
+                """SELECT file_id, conversation_id, filename, original_name, 
+                          file_path, file_size, mime_type, doc_id, status, 
+                          created_at, error_message
+                   FROM conversation_files 
+                   WHERE conversation_id = ? 
+                   ORDER BY created_at DESC""",
+                (conversation_id,)
+            )
+            rows = cursor.fetchall()
+        
+        return [self._row_to_file_sqlite(row) for row in rows]
+    
+    async def _list_files_mysql(self, conversation_id: str) -> List[ConversationFile]:
+        """MySQL 模式列出文件"""
         pool = await self._get_mysql_pool()
-        await self._ensure_schema()
+        if pool is None:
+            return []
+        await self._ensure_mysql_schema()
         
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -137,7 +205,28 @@ class ConversationFileStore:
     
     async def get_file(self, conversation_id: str, file_id: str) -> Optional[ConversationFile]:
         """获取单个文件信息"""
+        if self._mysql_enabled:
+            return await self._get_file_mysql(conversation_id, file_id)
+        
+        # SQLite 模式
+        with self._get_db_connection() as conn:
+            cursor = conn.execute(
+                """SELECT file_id, conversation_id, filename, original_name, 
+                          file_path, file_size, mime_type, doc_id, status, 
+                          created_at, error_message
+                   FROM conversation_files 
+                   WHERE conversation_id = ? AND file_id = ?""",
+                (conversation_id, file_id)
+            )
+            row = cursor.fetchone()
+        
+        return self._row_to_file_sqlite(row) if row else None
+    
+    async def _get_file_mysql(self, conversation_id: str, file_id: str) -> Optional[ConversationFile]:
+        """MySQL 模式获取文件"""
         pool = await self._get_mysql_pool()
+        if pool is None:
+            return None
         
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -162,7 +251,31 @@ class ConversationFileStore:
         error_message: Optional[str] = None,
     ) -> None:
         """更新文件状态（用于 ingest 完成后更新）"""
+        if self._mysql_enabled:
+            await self._update_file_status_mysql(conversation_id, file_id, status, doc_id, error_message)
+            return
+        
+        # SQLite 模式
+        with self._get_db_connection() as conn:
+            conn.execute(
+                """UPDATE conversation_files 
+                   SET status = ?, doc_id = ?, error_message = ?
+                   WHERE conversation_id = ? AND file_id = ?""",
+                (status, doc_id, error_message, conversation_id, file_id)
+            )
+    
+    async def _update_file_status_mysql(
+        self,
+        conversation_id: str,
+        file_id: str,
+        status: str,
+        doc_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """MySQL 模式更新状态"""
         pool = await self._get_mysql_pool()
+        if pool is None:
+            return
         
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -193,16 +306,24 @@ class ConversationFileStore:
             print(f"[FileStore] Failed to delete file: {e}")
         
         # 删除数据库记录
-        pool = await self._get_mysql_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "DELETE FROM conversation_files WHERE conversation_id = %s AND file_id = %s",
+        if self._mysql_enabled:
+            pool = await self._get_mysql_pool()
+            if pool is not None:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute(
+                            "DELETE FROM conversation_files WHERE conversation_id = %s AND file_id = %s",
+                            (conversation_id, file_id)
+                        )
+        else:
+            # SQLite 模式
+            with self._get_db_connection() as conn:
+                conn.execute(
+                    "DELETE FROM conversation_files WHERE conversation_id = ? AND file_id = ?",
                     (conversation_id, file_id)
                 )
-                deleted = cursor.rowcount > 0
         
-        return deleted
+        return True
     
     async def delete_conversation_files(self, conversation_id: str) -> int:
         """
@@ -223,21 +344,59 @@ class ConversationFileStore:
                 print(f"[FileStore] Failed to delete directory: {e}")
         
         # 删除数据库记录
-        pool = await self._get_mysql_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    "DELETE FROM conversation_files WHERE conversation_id = %s",
+        if self._mysql_enabled:
+            pool = await self._get_mysql_pool()
+            if pool is not None:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute(
+                            "DELETE FROM conversation_files WHERE conversation_id = %s",
+                            (conversation_id,)
+                        )
+        else:
+            # SQLite 模式
+            with self._get_db_connection() as conn:
+                conn.execute(
+                    "DELETE FROM conversation_files WHERE conversation_id = ?",
                     (conversation_id,)
                 )
-                deleted_count = cursor.rowcount
         
-        return deleted_count
+        return len(files)
     
     async def _save_to_db(self, file_info: ConversationFile) -> None:
         """保存文件信息到数据库"""
+        if self._mysql_enabled:
+            await self._save_to_mysql(file_info)
+            return
+        
+        # SQLite 模式
+        with self._get_db_connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO conversation_files 
+                   (file_id, conversation_id, filename, original_name, file_path, 
+                    file_size, mime_type, doc_id, status, created_at, error_message)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    file_info.file_id,
+                    file_info.conversation_id,
+                    file_info.filename,
+                    file_info.original_name,
+                    file_info.file_path,
+                    file_info.file_size,
+                    file_info.mime_type,
+                    file_info.doc_id,
+                    file_info.status,
+                    file_info.created_at.isoformat(),
+                    file_info.error_message,
+                )
+            )
+    
+    async def _save_to_mysql(self, file_info: ConversationFile) -> None:
+        """保存到 MySQL"""
         pool = await self._get_mysql_pool()
-        await self._ensure_schema()
+        if pool is None:
+            return
+        await self._ensure_mysql_schema()
         
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -245,7 +404,16 @@ class ConversationFileStore:
                     """INSERT INTO conversation_files 
                        (file_id, conversation_id, filename, original_name, file_path, 
                         file_size, mime_type, doc_id, status, created_at, error_message)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       ON DUPLICATE KEY UPDATE
+                       filename = VALUES(filename),
+                       original_name = VALUES(original_name),
+                       file_path = VALUES(file_path),
+                       file_size = VALUES(file_size),
+                       mime_type = VALUES(mime_type),
+                       doc_id = VALUES(doc_id),
+                       status = VALUES(status),
+                       error_message = VALUES(error_message)""",
                     (
                         file_info.file_id,
                         file_info.conversation_id,
@@ -262,7 +430,7 @@ class ConversationFileStore:
                 )
     
     def _row_to_file(self, row: tuple) -> ConversationFile:
-        """将数据库行转换为 ConversationFile"""
+        """将 MySQL 数据库行转换为 ConversationFile"""
         return ConversationFile(
             file_id=row[0],
             conversation_id=row[1],
@@ -273,12 +441,31 @@ class ConversationFileStore:
             mime_type=row[6],
             doc_id=row[7],
             status=row[8],
-            created_at=row[9],
+            created_at=row[9] if isinstance(row[9], datetime) else datetime.fromisoformat(str(row[9])),
             error_message=row[10],
         )
     
+    def _row_to_file_sqlite(self, row: sqlite3.Row) -> ConversationFile:
+        """将 SQLite 数据库行转换为 ConversationFile"""
+        return ConversationFile(
+            file_id=row["file_id"],
+            conversation_id=row["conversation_id"],
+            filename=row["filename"],
+            original_name=row["original_name"],
+            file_path=row["file_path"],
+            file_size=row["file_size"],
+            mime_type=row["mime_type"],
+            doc_id=row["doc_id"],
+            status=row["status"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            error_message=row["error_message"],
+        )
+    
     async def _get_mysql_pool(self):
-        """获取或创建 MySQL 连接池"""
+        """获取或创建 MySQL 连接池，如果禁用则返回 None"""
+        if not self._mysql_enabled:
+            return None
+            
         if self._mysql_pool is not None:
             return self._mysql_pool
         
@@ -298,12 +485,14 @@ class ConversationFileStore:
             minsize=1,
             maxsize=5,
         )
-        await self._ensure_schema()
+        await self._ensure_mysql_schema()
         return self._mysql_pool
     
-    async def _ensure_schema(self) -> None:
-        """确保表结构存在"""
+    async def _ensure_mysql_schema(self) -> None:
+        """确保 MySQL 表结构存在"""
         pool = await self._get_mysql_pool()
+        if pool is None:
+            return
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 # 对话文件表
