@@ -26,7 +26,7 @@ from src.observability.logger import get_logger
 
 # Libs layer imports
 from src.libs.loader.file_integrity import SQLiteIntegrityChecker
-from src.libs.loader.pdf_loader import PdfLoader
+from src.libs.loader.universal_loader import UniversalLoader
 from src.libs.embedding.embedding_factory import EmbeddingFactory
 from src.libs.vector_store.vector_store_factory import VectorStoreFactory
 
@@ -68,7 +68,8 @@ class PipelineResult:
         image_count: int = 0,
         vector_ids: Optional[List[str]] = None,
         error: Optional[str] = None,
-        stages: Optional[Dict[str, Any]] = None
+        stages: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         self.success = success
         self.file_path = file_path
@@ -78,6 +79,7 @@ class PipelineResult:
         self.vector_ids = vector_ids or []
         self.error = error
         self.stages = stages or {}
+        self.metadata = metadata or {}
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为可序列化字典（用于 API 返回或日志输出）。"""
@@ -139,14 +141,13 @@ class IngestionPipeline:
         self.integrity_checker = SQLiteIntegrityChecker(db_path=str(resolve_path("data/db/ingestion_history.db")))
         logger.info("  ✓ FileIntegrityChecker initialized")
         
-        # 阶段 2：文档加载（根据扩展名选择 loader）
-        self.pdf_loader = PdfLoader(
+        # 阶段 2：文档加载（通用 loader，支持 PDF/DOCX/XLSX/PPTX/TXT/MD/HTML 等）
+        self.loader = UniversalLoader(
+            settings=settings,
             extract_images=True,
             image_storage_dir=str(resolve_path(f"data/images/{collection}"))
         )
-        from src.libs.loader.text_loader import TextLoader
-        self.text_loader = TextLoader()
-        logger.info("  ✓ Document loaders initialized (PDF + Text)")
+        logger.info("  ✓ UniversalLoader initialized (multi-format + VLM OCR fallback)")
         
         # 阶段 3：切块
         self.chunker = DocumentChunker(settings)
@@ -155,7 +156,10 @@ class IngestionPipeline:
         # 阶段 4：文本/图像变换增强
         # 读取最大并发 workers 配置，控制 LLM 调用速率，防止 API 配额/内存被打爆
         ingest_cfg = settings.ingestion if settings.ingestion else {}
-        max_workers = getattr(ingest_cfg, 'max_workers', None) if hasattr(ingest_cfg, 'max_workers') else ingest_cfg.get('max_workers', None)
+        if isinstance(ingest_cfg, dict):
+            max_workers = ingest_cfg.get('max_workers', None)
+        else:
+            max_workers = getattr(ingest_cfg, 'max_workers', None)
         
         self.chunk_refiner = ChunkRefiner(settings, max_workers=max_workers)
         logger.info(f"  ✓ ChunkRefiner initialized (use_llm={self.chunk_refiner.use_llm}, max_workers={self.chunk_refiner.max_workers})")
@@ -267,16 +271,9 @@ class IngestionPipeline:
             logger.info("\n📄 Stage 2: Document Loading")
             _notify("load", 2)
             
-            # 根据文件扩展名选择 loader
-            file_ext = Path(file_path).suffix.lower()
-            if file_ext == '.pdf':
-                loader = self.pdf_loader
-            else:
-                loader = self.text_loader
-            
-            # 统计加载耗时，便于后续性能分析。
+            # 通用 loader 处理所有支持格式
             _t0 = time.monotonic()
-            document = loader.load(str(file_path))
+            document = self.loader.load(str(file_path))
             _elapsed = (time.monotonic() - _t0) * 1000.0
             # text_preview只看到前200个字
             text_preview = document.text[:200].replace('\n', ' ') + "..." if len(document.text) > 200 else document.text
@@ -290,7 +287,10 @@ class IngestionPipeline:
             stages["loading"] = {
                 "doc_id": document.id,
                 "text_length": len(document.text),
-                "image_count": image_count
+                "image_count": image_count,
+                "extract_method": document.metadata.get("extract_method"),
+                "page_count": document.metadata.get("page_count"),
+                "word_count": document.metadata.get("word_count"),
             }
             if trace is not None:
                 # trace 中保留完整文本用于离线诊断。
@@ -418,6 +418,16 @@ class IngestionPipeline:
             
             dense_vectors = batch_result.dense_vectors
             sparse_stats = batch_result.sparse_stats
+            
+            # 保护：若编码结果与 chunk 数量不匹配，说明 embedding 阶段全部/部分失败，
+            # 应提前终止并给出清晰错误，避免下游 upsert 因长度不匹配而崩溃。
+            if len(dense_vectors) != len(chunks) or len(sparse_stats) != len(chunks):
+                raise ValueError(
+                    f"Embedding 结果与 chunk 数量不匹配: "
+                    f"chunks={len(chunks)}, dense_vectors={len(dense_vectors)}, "
+                    f"sparse_stats={len(sparse_stats)}. "
+                    f"可能原因：文档文本为空/过短，或 Embedding API 调用失败。"
+                )
             
             logger.info(f"  Dense vectors: {len(dense_vectors)} (dim={len(dense_vectors[0]) if dense_vectors else 0})")
             logger.info(f"  Sparse stats: {len(sparse_stats)} documents")
@@ -572,7 +582,8 @@ class IngestionPipeline:
                 chunk_count=len(chunks),
                 image_count=len(images),
                 vector_ids=vector_ids,
-                stages=stages
+                stages=stages,
+                metadata=document.metadata,
             )
             
         except Exception as e:
@@ -593,7 +604,8 @@ class IngestionPipeline:
                 file_path=str(file_path),
                 doc_id=file_hash if 'file_hash' in locals() else None,
                 error=str(e),
-                stages=stages
+                stages=stages,
+                metadata=locals().get("document", {}).metadata if 'document' in locals() else {},
             )
     
     async def arun(

@@ -88,14 +88,14 @@
             ref="fileInput"
             type="file"
             style="display: none"
-            accept=".pdf,.docx,.txt,.md,.csv,.xlsx"
+            accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.yaml,.yml"
             @change="handleFileSelect"
           />
           <div class="upload-area" @click="fileInput?.click()">
             <el-icon class="upload-icon"><Upload /></el-icon>
             <div class="upload-text">
               <div>点击上传文件</div>
-              <div class="upload-hint">支持 PDF, Word, TXT, CSV, Excel</div>
+              <div class="upload-hint">支持 PDF, Word, Excel, PPT, TXT, Markdown, CSV, HTML, YAML</div>
             </div>
           </div>
           
@@ -122,13 +122,23 @@
                 <div class="file-size">{{ formatFileSize(file.size) }}</div>
               </div>
               
-              <el-tag 
-                :type="getStatusType(file.status)" 
-                size="small"
-                class="file-status"
-              >
-                {{ getStatusText(file.status) }}
-              </el-tag>
+              <div class="file-badges">
+                <el-tag 
+                  v-if="file.extract_method === 'vlm_ocr'"
+                  type="success"
+                  size="small"
+                  class="file-badge"
+                >
+                  OCR
+                </el-tag>
+                <el-tag 
+                  :type="getStatusType(file.status)" 
+                  size="small"
+                  class="file-badge"
+                >
+                  {{ getStatusText(file.status) }}
+                </el-tag>
+              </div>
               
               <el-button
                 type="danger"
@@ -822,7 +832,14 @@ function getFileIcon(filename) {
     txt: 'DocumentCopy',
     md: 'DocumentCopy',
     csv: 'DataLine',
-    xlsx: 'DataLine'
+    xlsx: 'DataLine',
+    xls: 'DataLine',
+    pptx: 'DataBoard',
+    html: 'Link',
+    htm: 'Link',
+    json: 'DocumentCopy',
+    yaml: 'DocumentCopy',
+    yml: 'DocumentCopy'
   }
   return icons[ext] || 'Document'
 }
@@ -1040,7 +1057,10 @@ watch(messages, () => {
 .file-icon-pdf { background: #ef4444; }
 .file-icon-doc, .file-icon-docx { background: #3b82f6; }
 .file-icon-txt, .file-icon-md { background: #10b981; }
-.file-icon-csv, .file-icon-xlsx { background: #f59e0b; }
+.file-icon-csv, .file-icon-xlsx, .file-icon-xls { background: #f59e0b; }
+.file-icon-pptx { background: #d946ef; }
+.file-icon-html, .file-icon-htm { background: #8b5cf6; }
+.file-icon-json, .file-icon-yaml, .file-icon-yml { background: #06b6d4; }
 .file-icon-default { background: #64748b; }
 
 .file-info {
@@ -1061,7 +1081,14 @@ watch(messages, () => {
   color: #94a3b8;
 }
 
-.file-status {
+.file-badges {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-badge {
   flex-shrink: 0;
 }
 

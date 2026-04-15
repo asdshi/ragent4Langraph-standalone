@@ -9,11 +9,13 @@ This package contains document loader components:
 
 from src.libs.loader.base_loader import BaseLoader
 from src.libs.loader.pdf_loader import PdfLoader
+from src.libs.loader.universal_loader import UniversalLoader
 from src.libs.loader.file_integrity import FileIntegrityChecker, SQLiteIntegrityChecker
 
 __all__ = [
     "BaseLoader",
     "PdfLoader",
+    "UniversalLoader",
     "FileIntegrityChecker",
     "SQLiteIntegrityChecker",
 ]

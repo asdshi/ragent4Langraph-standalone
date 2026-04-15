@@ -125,6 +125,14 @@ async def _rollback_checkpoints(checkpointer, thread_id: str, clean_checkpoint_i
 INGEST_SEMAPHORE = asyncio.Semaphore(2)
 
 
+# 允许上传的文件扩展名白名单
+ALLOWED_EXTENSIONS = {
+    '.pdf', '.docx', '.txt', '.md', '.csv',
+    '.xlsx', '.xls', '.pptx', '.html', '.htm',
+    '.json', '.yaml', '.yml',
+}
+
+
 async def ingest_file_task(
     file_store: ConversationFileStore,
     conversation_id: str,
@@ -154,16 +162,28 @@ async def ingest_file_task(
             # 获取 doc_id（从 result 中提取）
             doc_id = result.doc_id if result.success else None
             
+            # 从 loader metadata 中提取额外信息
+            meta = result.metadata or {}
+            extract_method = meta.get("extract_method")
+            page_count = meta.get("page_count")
+            word_count = meta.get("word_count")
+            
             # 更新状态为 ready
             if result.success and doc_id:
                 await file_store.update_file_status(
-                    conversation_id, file_id, "ready", doc_id=doc_id
+                    conversation_id, file_id, "ready", doc_id=doc_id,
+                    extract_method=extract_method,
+                    page_count=page_count,
+                    word_count=word_count,
                 )
-                print(f"[Ingest] File {file_id} ingested successfully to {collection}, doc_id={doc_id}")
+                print(f"[Ingest] File {file_id} ingested successfully to {collection}, doc_id={doc_id}, method={extract_method}")
             else:
                 error_msg = result.error or "Unknown error"
                 await file_store.update_file_status(
-                    conversation_id, file_id, "error", error_message=error_msg
+                    conversation_id, file_id, "error", error_message=error_msg,
+                    extract_method=extract_method,
+                    page_count=page_count,
+                    word_count=word_count,
                 )
                 print(f"[Ingest] Failed to ingest file {file_id}: {error_msg}")
             
@@ -249,6 +269,20 @@ def create_app() -> FastAPI:
             if not content:
                 raise HTTPException(status_code=400, detail="Empty file")
             
+            # 扩展名校验
+            original_name = file.filename or ""
+            file_ext = Path(original_name).suffix.lower()
+            if file_ext == '.doc':
+                raise HTTPException(
+                    status_code=400,
+                    detail="旧版 .doc 格式暂不支持，请先转换为 .docx 后上传"
+                )
+            if file_ext not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的文件格式: {file_ext}。支持: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+                )
+            
             # 保存文件
             file_info = await file_store.save_file(
                 conversation_id=conversation_id,
@@ -309,6 +343,10 @@ def create_app() -> FastAPI:
                         "status": f.status,
                         "doc_id": f.doc_id,
                         "created_at": f.created_at.isoformat() if f.created_at else None,
+                        "file_type": f.file_type,
+                        "page_count": f.page_count,
+                        "extract_method": f.extract_method,
+                        "word_count": f.word_count,
                     }
                     for f in files
                 ]

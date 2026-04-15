@@ -31,7 +31,7 @@ embedding:
 vision_llm:
   enabled: true
   provider: "openai"
-  model: "qwen-vl-max"  # 阿里云百炼视觉模型
+  model: "qwen3.5-omni-flash"  # 复用全模态模型做 OCR / 图片理解
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   # api_key 会从 OPENAI_API_KEY 环境变量自动读取
   # Ollama-specific settings (if provider is ollama):

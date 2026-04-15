@@ -33,6 +33,10 @@ class ConversationFile:
     status: str  # 'pending', 'ingesting', 'ready', 'error'
     created_at: datetime
     error_message: Optional[str] = None
+    file_type: Optional[str] = None      # pdf, docx, txt 等
+    page_count: Optional[int] = None     # 页数
+    extract_method: Optional[str] = None # markitdown, vlm_ocr, text_plain
+    word_count: Optional[int] = None     # 提取字数
 
 
 class ConversationFileStore:
@@ -73,7 +77,7 @@ class ConversationFileStore:
         return conn
     
     def _ensure_sqlite_schema(self) -> None:
-        """确保 SQLite 表结构存在"""
+        """确保 SQLite 表结构存在（含迁移逻辑）"""
         with self._get_db_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -88,9 +92,25 @@ class ConversationFileStore:
                     doc_id TEXT NULL,
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at TEXT NOT NULL,
-                    error_message TEXT NULL
+                    error_message TEXT NULL,
+                    file_type TEXT NULL,
+                    page_count INTEGER NULL,
+                    extract_method TEXT NULL,
+                    word_count INTEGER NULL
                 )
             """)
+            # 迁移：为旧表添加新字段
+            cursor = conn.execute("PRAGMA table_info(conversation_files)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            migrations = [
+                ("file_type", "TEXT NULL"),
+                ("page_count", "INTEGER NULL"),
+                ("extract_method", "TEXT NULL"),
+                ("word_count", "INTEGER NULL"),
+            ]
+            for col_name, col_type in migrations:
+                if col_name not in existing_cols:
+                    conn.execute(f"ALTER TABLE conversation_files ADD COLUMN {col_name} {col_type}")
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conv_files 
                 ON conversation_files (conversation_id, created_at)
@@ -142,6 +162,9 @@ class ConversationFileStore:
         with open(file_path, "wb") as f:
             f.write(file_content)
         
+        # 从文件名推断 file_type
+        file_type = Path(original_filename).suffix.lower().lstrip('.') if original_filename else None
+
         # 创建文件记录
         file_info = ConversationFile(
             file_id=file_id,
@@ -154,6 +177,7 @@ class ConversationFileStore:
             doc_id=None,
             status="pending",
             created_at=datetime.now(),
+            file_type=file_type,
         )
         
         # 保存到数据库（SQLite 或 MySQL）
@@ -171,7 +195,8 @@ class ConversationFileStore:
             cursor = conn.execute(
                 """SELECT file_id, conversation_id, filename, original_name, 
                           file_path, file_size, mime_type, doc_id, status, 
-                          created_at, error_message
+                          created_at, error_message, file_type, page_count, 
+                          extract_method, word_count
                    FROM conversation_files 
                    WHERE conversation_id = ? 
                    ORDER BY created_at DESC""",
@@ -193,7 +218,8 @@ class ConversationFileStore:
                 await cursor.execute(
                     """SELECT file_id, conversation_id, filename, original_name, 
                               file_path, file_size, mime_type, doc_id, status, 
-                              created_at, error_message
+                              created_at, error_message, file_type, page_count, 
+                              extract_method, word_count
                        FROM conversation_files 
                        WHERE conversation_id = %s 
                        ORDER BY created_at DESC""",
@@ -213,7 +239,8 @@ class ConversationFileStore:
             cursor = conn.execute(
                 """SELECT file_id, conversation_id, filename, original_name, 
                           file_path, file_size, mime_type, doc_id, status, 
-                          created_at, error_message
+                          created_at, error_message, file_type, page_count, 
+                          extract_method, word_count
                    FROM conversation_files 
                    WHERE conversation_id = ? AND file_id = ?""",
                 (conversation_id, file_id)
@@ -233,7 +260,8 @@ class ConversationFileStore:
                 await cursor.execute(
                     """SELECT file_id, conversation_id, filename, original_name, 
                               file_path, file_size, mime_type, doc_id, status, 
-                              created_at, error_message
+                              created_at, error_message, file_type, page_count, 
+                              extract_method, word_count
                        FROM conversation_files 
                        WHERE conversation_id = %s AND file_id = %s""",
                     (conversation_id, file_id)
@@ -249,19 +277,48 @@ class ConversationFileStore:
         status: str,
         doc_id: Optional[str] = None,
         error_message: Optional[str] = None,
+        file_type: Optional[str] = None,
+        page_count: Optional[int] = None,
+        extract_method: Optional[str] = None,
+        word_count: Optional[int] = None,
     ) -> None:
-        """更新文件状态（用于 ingest 完成后更新）"""
+        """更新文件状态（用于 ingest 完成后更新）
+        
+        对于 file_type/page_count/extract_method/word_count，若传入 None 则保留数据库现有值，
+        避免 ingest 中间状态更新时抹掉已记录的信息。
+        """
         if self._mysql_enabled:
-            await self._update_file_status_mysql(conversation_id, file_id, status, doc_id, error_message)
+            await self._update_file_status_mysql(
+                conversation_id, file_id, status, doc_id, error_message,
+                file_type, page_count, extract_method, word_count
+            )
             return
         
-        # SQLite 模式
+        # SQLite 模式：动态构建 UPDATE，None 字段不覆盖
+        fields = ["status = ?", "doc_id = ?", "error_message = ?"]
+        params = [status, doc_id, error_message]
+        
+        if file_type is not None:
+            fields.append("file_type = ?")
+            params.append(file_type)
+        if page_count is not None:
+            fields.append("page_count = ?")
+            params.append(page_count)
+        if extract_method is not None:
+            fields.append("extract_method = ?")
+            params.append(extract_method)
+        if word_count is not None:
+            fields.append("word_count = ?")
+            params.append(word_count)
+        
+        params.extend([conversation_id, file_id])
+        
         with self._get_db_connection() as conn:
             conn.execute(
-                """UPDATE conversation_files 
-                   SET status = ?, doc_id = ?, error_message = ?
+                f"""UPDATE conversation_files 
+                   SET {', '.join(fields)}
                    WHERE conversation_id = ? AND file_id = ?""",
-                (status, doc_id, error_message, conversation_id, file_id)
+                tuple(params)
             )
     
     async def _update_file_status_mysql(
@@ -271,19 +328,42 @@ class ConversationFileStore:
         status: str,
         doc_id: Optional[str] = None,
         error_message: Optional[str] = None,
+        file_type: Optional[str] = None,
+        page_count: Optional[int] = None,
+        extract_method: Optional[str] = None,
+        word_count: Optional[int] = None,
     ) -> None:
         """MySQL 模式更新状态"""
         pool = await self._get_mysql_pool()
         if pool is None:
             return
         
+        # 动态构建 UPDATE，None 字段不覆盖
+        fields = ["status = %s", "doc_id = %s", "error_message = %s"]
+        params = [status, doc_id, error_message]
+        
+        if file_type is not None:
+            fields.append("file_type = %s")
+            params.append(file_type)
+        if page_count is not None:
+            fields.append("page_count = %s")
+            params.append(page_count)
+        if extract_method is not None:
+            fields.append("extract_method = %s")
+            params.append(extract_method)
+        if word_count is not None:
+            fields.append("word_count = %s")
+            params.append(word_count)
+        
+        params.extend([conversation_id, file_id])
+        
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
-                    """UPDATE conversation_files 
-                       SET status = %s, doc_id = %s, error_message = %s
+                    f"""UPDATE conversation_files 
+                       SET {', '.join(fields)}
                        WHERE conversation_id = %s AND file_id = %s""",
-                    (status, doc_id, error_message, conversation_id, file_id)
+                    tuple(params)
                 )
     
     async def delete_file(self, conversation_id: str, file_id: str) -> bool:
@@ -374,8 +454,9 @@ class ConversationFileStore:
             conn.execute(
                 """INSERT OR REPLACE INTO conversation_files 
                    (file_id, conversation_id, filename, original_name, file_path, 
-                    file_size, mime_type, doc_id, status, created_at, error_message)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    file_size, mime_type, doc_id, status, created_at, error_message,
+                    file_type, page_count, extract_method, word_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     file_info.file_id,
                     file_info.conversation_id,
@@ -388,6 +469,10 @@ class ConversationFileStore:
                     file_info.status,
                     file_info.created_at.isoformat(),
                     file_info.error_message,
+                    file_info.file_type,
+                    file_info.page_count,
+                    file_info.extract_method,
+                    file_info.word_count,
                 )
             )
     
@@ -403,8 +488,9 @@ class ConversationFileStore:
                 await cursor.execute(
                     """INSERT INTO conversation_files 
                        (file_id, conversation_id, filename, original_name, file_path, 
-                        file_size, mime_type, doc_id, status, created_at, error_message)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        file_size, mime_type, doc_id, status, created_at, error_message,
+                        file_type, page_count, extract_method, word_count)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON DUPLICATE KEY UPDATE
                        filename = VALUES(filename),
                        original_name = VALUES(original_name),
@@ -413,7 +499,11 @@ class ConversationFileStore:
                        mime_type = VALUES(mime_type),
                        doc_id = VALUES(doc_id),
                        status = VALUES(status),
-                       error_message = VALUES(error_message)""",
+                       error_message = VALUES(error_message),
+                       file_type = VALUES(file_type),
+                       page_count = VALUES(page_count),
+                       extract_method = VALUES(extract_method),
+                       word_count = VALUES(word_count)""",
                     (
                         file_info.file_id,
                         file_info.conversation_id,
@@ -426,6 +516,10 @@ class ConversationFileStore:
                         file_info.status,
                         file_info.created_at,
                         file_info.error_message,
+                        file_info.file_type,
+                        file_info.page_count,
+                        file_info.extract_method,
+                        file_info.word_count,
                     )
                 )
     
@@ -443,6 +537,10 @@ class ConversationFileStore:
             status=row[8],
             created_at=row[9] if isinstance(row[9], datetime) else datetime.fromisoformat(str(row[9])),
             error_message=row[10],
+            file_type=row[11] if len(row) > 11 else None,
+            page_count=row[12] if len(row) > 12 else None,
+            extract_method=row[13] if len(row) > 13 else None,
+            word_count=row[14] if len(row) > 14 else None,
         )
     
     def _row_to_file_sqlite(self, row: sqlite3.Row) -> ConversationFile:
@@ -459,6 +557,10 @@ class ConversationFileStore:
             status=row["status"],
             created_at=datetime.fromisoformat(row["created_at"]),
             error_message=row["error_message"],
+            file_type=row["file_type"] if "file_type" in row.keys() else None,
+            page_count=row["page_count"] if "page_count" in row.keys() else None,
+            extract_method=row["extract_method"] if "extract_method" in row.keys() else None,
+            word_count=row["word_count"] if "word_count" in row.keys() else None,
         )
     
     async def _get_mysql_pool(self):
@@ -489,7 +591,7 @@ class ConversationFileStore:
         return self._mysql_pool
     
     async def _ensure_mysql_schema(self) -> None:
-        """确保 MySQL 表结构存在"""
+        """确保 MySQL 表结构存在（含迁移逻辑）"""
         pool = await self._get_mysql_pool()
         if pool is None:
             return
@@ -511,12 +613,35 @@ class ConversationFileStore:
                         status VARCHAR(32) NOT NULL DEFAULT 'pending',
                         created_at DATETIME NOT NULL,
                         error_message TEXT NULL,
+                        file_type VARCHAR(32) NULL,
+                        page_count INT NULL,
+                        extract_method VARCHAR(32) NULL,
+                        word_count INT NULL,
                         INDEX idx_conv_files (conversation_id, created_at),
                         INDEX idx_file_id (file_id),
                         UNIQUE KEY uk_conv_file (conversation_id, file_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
+                # 迁移旧表：为缺失字段执行 ALTER TABLE（忽略已存在错误）
+                migrations = [
+                    ("file_type", "VARCHAR(32) NULL"),
+                    ("page_count", "INT NULL"),
+                    ("extract_method", "VARCHAR(32) NULL"),
+                    ("word_count", "INT NULL"),
+                ]
+                for col_name, col_type in migrations:
+                    try:
+                        await cursor.execute(
+                            f"ALTER TABLE conversation_files ADD COLUMN {col_name} {col_type}"
+                        )
+                    except Exception as e:
+                        # 1060 = Duplicate column name, 1062 = 其他已存在情况
+                        err_msg = str(e).lower()
+                        if "duplicate" in err_msg or "1060" in err_msg or "already exists" in err_msg:
+                            continue
+                        # 其他未知错误记录但不阻断
+                        print(f"[MySQL Migration] Warning adding {col_name}: {e}")
 
 
 def build_file_store() -> ConversationFileStore:
