@@ -11,6 +11,7 @@ import uuid
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User query")
+    user_id: str = Field(default="1", description="User identifier")
     conversation_id: Optional[str] = Field(default=None)
     task_id: Optional[str] = Field(default=None)
     collection: Optional[str] = Field(default=None)
@@ -72,6 +73,7 @@ class RAGState(TypedDict, total=False):
     summary: str
     
     # === 对话元数据 ===
+    user_id: str
     task_id: str
     conversation_id: str
     
@@ -94,6 +96,9 @@ class RAGState(TypedDict, total=False):
     # === 生成结果 ===
     final_answer: str
     used_model: str
+    
+    # === 长期记忆（跨会话认知连续）===
+    memories: List[str]
     
     # === 追踪 ===
     trace_events: List[Dict[str, Any]]

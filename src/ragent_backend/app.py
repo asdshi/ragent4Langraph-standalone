@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
+from pathlib import Path
 
 # 加载 .env 文件
 try:
@@ -24,7 +25,7 @@ except ImportError:
     pass  # python-dotenv 未安装
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -44,28 +45,84 @@ from src.core.settings import load_settings, Settings
 def create_checkpointer():
     """
     创建 checkpointer
-    优先使用 Postgres，回退到 Sqlite
+    优先使用 Postgres，回退到 AsyncSqliteSaver，最后兜底 InMemorySaver
     """
-    # 检查 PostgreSQL 配置
     postgres_url = os.getenv("RAGENT_POSTGRES_URL")
     if postgres_url:
         try:
-            # PostgresSaver 需要 psycopg 或 psycopg2
             checkpointer = PostgresSaver.from_conn_string(postgres_url)
             return checkpointer
         except Exception as e:
             print(f"[Checkpointer] Failed to init Postgres: {e}, fallback to Sqlite")
     
-    # 使用 Sqlite（本地开发）
     db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
     print(f"[Checkpointer] Using Sqlite: {db_path}")
-    # 使用 InMemorySaver 作为简单替代（如果 SqliteSaver 有问题）
+    
+    # 优先异步 SQLite（真流式 workflow.run_stream 需要 async checkpointer）
+    # uvicorn 调用 create_app() 时事件循环已在运行，不能在运行中的 loop 上调用 run_until_complete()，
+    # 所以派一个独立线程去跑 asyncio.run()，再用同步的 future.result() 等结果拿回来。
+    try:
+        import concurrent.futures
+        
+        def _create_async_checkpointer(path: str):
+            async def _make():
+                import aiosqlite
+                from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+                conn = await aiosqlite.connect(path)
+                return AsyncSqliteSaver(conn=conn)
+            return asyncio.run(_make())
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_create_async_checkpointer, db_path)
+            return future.result()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[Checkpointer] Failed to create AsyncSqliteSaver: {e}")
+    
+    # 回退同步 SQLite
+    try:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        return SqliteSaver(conn=str(db_path))
+    except Exception as e:
+        print(f"[Checkpointer] Failed to create SqliteSaver(conn=...): {e}")
+    
+    # 最后兜底内存
     try:
         from langgraph.checkpoint.memory import InMemorySaver
         return InMemorySaver()
     except Exception as e:
         print(f"[Checkpointer] Failed to create InMemorySaver: {e}")
         return None
+
+
+async def _rollback_checkpoints(checkpointer, thread_id: str, clean_checkpoint_id: Optional[str]) -> None:
+    """
+    用户中断流式输出后，物理回滚本轮产生的脏 checkpoint。
+    语义：只保留 clean_checkpoint_id 对应的状态，删除该 thread 下所有其他 checkpoint 记录。
+    """
+    if clean_checkpoint_id is None:
+        return
+    
+    db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
+    if not Path(db_path).exists():
+        return
+    
+    try:
+        import aiosqlite
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ?",
+                (thread_id, clean_checkpoint_id)
+            )
+            await db.commit()
+        print(f"[Rollback] Checkpoint rolled back for thread={thread_id}, kept={clean_checkpoint_id}")
+    except Exception as e:
+        print(f"[Rollback] Failed to rollback checkpoints: {e}")
+
+
+# 全局并发控制：限制同时执行的 ingest 后台任务数量，防止 LLM API 配额和内存被打爆
+INGEST_SEMAPHORE = asyncio.Semaphore(2)
 
 
 async def ingest_file_task(
@@ -78,41 +135,43 @@ async def ingest_file_task(
 ) -> None:
     """
     后台任务：将文件 ingest 到对话的 collection
+    受全局 INGEST_SEMAPHORE 控制，避免无限制并发导致资源耗尽。
     """
-    try:
-        # 更新状态为 ingesting
-        await file_store.update_file_status(conversation_id, file_id, "ingesting")
-        
-        # 创建 ingestion pipeline，指定 target collection
-        pipeline = IngestionPipeline(settings, collection=collection)
-        
-        # 执行 ingest
-        result = await asyncio.to_thread(
-            pipeline.run,
-            file_path=file_path,
-        )
-        
-        # 获取 doc_id（从 result 中提取）
-        doc_id = result.doc_id if result.success else None
-        
-        # 更新状态为 ready
-        if result.success and doc_id:
-            await file_store.update_file_status(
-                conversation_id, file_id, "ready", doc_id=doc_id
+    async with INGEST_SEMAPHORE:
+        try:
+            # 更新状态为 ingesting
+            await file_store.update_file_status(conversation_id, file_id, "ingesting")
+            
+            # 创建 ingestion pipeline，指定 target collection
+            pipeline = IngestionPipeline(settings, collection=collection)
+            
+            # 执行 ingest（在线程池中运行，避免阻塞事件循环）
+            result = await asyncio.to_thread(
+                pipeline.run,
+                file_path=file_path,
             )
-            print(f"[Ingest] File {file_id} ingested successfully to {collection}, doc_id={doc_id}")
-        else:
-            error_msg = result.error or "Unknown error"
+            
+            # 获取 doc_id（从 result 中提取）
+            doc_id = result.doc_id if result.success else None
+            
+            # 更新状态为 ready
+            if result.success and doc_id:
+                await file_store.update_file_status(
+                    conversation_id, file_id, "ready", doc_id=doc_id
+                )
+                print(f"[Ingest] File {file_id} ingested successfully to {collection}, doc_id={doc_id}")
+            else:
+                error_msg = result.error or "Unknown error"
+                await file_store.update_file_status(
+                    conversation_id, file_id, "error", error_message=error_msg
+                )
+                print(f"[Ingest] Failed to ingest file {file_id}: {error_msg}")
+            
+        except Exception as e:
+            print(f"[Ingest] Failed to ingest file {file_id}: {e}")
             await file_store.update_file_status(
-                conversation_id, file_id, "error", error_message=error_msg
+                conversation_id, file_id, "error", error_message=str(e)
             )
-            print(f"[Ingest] Failed to ingest file {file_id}: {error_msg}")
-        
-    except Exception as e:
-        print(f"[Ingest] Failed to ingest file {file_id}: {e}")
-        await file_store.update_file_status(
-            conversation_id, file_id, "error", error_message=str(e)
-        )
 
 
 def create_app() -> FastAPI:
@@ -415,40 +474,97 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/api/v1/chat/stream")
-    async def chat_stream(request: ChatRequest) -> StreamingResponse:
-        """流式对话接口（简化版，实际应逐 token 流式）"""
+    async def chat_stream(request: ChatRequest, req: Request) -> StreamingResponse:
+        """真流式对话接口：token-by-token 输出，客户端断开时自动回滚脏 checkpoint"""
         
         async def event_stream() -> AsyncGenerator[str, None]:
-            thread_id = request.conversation_id or os.urandom(16).hex()
+            # 1. 确定 thread / conversation
+            if request.conversation_id:
+                thread_id = request.conversation_id
+                conv = await conversation_store.get_conversation(thread_id)
+                if not conv:
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'Conversation not found'}, ensure_ascii=False)}\n\n"
+                    return
+            else:
+                conv = await conversation_store.create_conversation()
+                thread_id = conv.conversation_id
             
             initial_state = {
                 "query": request.query,
                 "conversation_id": thread_id,
                 "task_id": request.task_id or os.urandom(8).hex(),
-                "collection": request.collection,
                 "top_k": request.top_k,
             }
             
-            final_state = await workflow.run(initial_state, thread_id=thread_id)
-            answer = final_state.get("final_answer", "")
-
-            # 模拟流式输出（实际应接入 LLM 的 stream 接口）
-            for chunk in _chunk_text(answer, 32):
-                event = {"type": "token", "content": chunk}
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            # 发送完成事件，包含记忆统计
-            memory_stats = workflow.get_memory_stats(final_state)
-            done_event = {
-                "type": "done",
-                "conversation_id": final_state.get("conversation_id"),
-                "task_id": final_state.get("task_id"),
-                "model_id": final_state.get("used_model"),
-                "trace": final_state.get("trace_events", []),
-                "memory_stats": memory_stats,
-            }
-            yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
-
+            # 2. 记录干净 checkpoint id（流式开始前）
+            clean_checkpoint_id = None
+            try:
+                config = {"configurable": {"thread_id": thread_id}}
+                if hasattr(checkpointer, 'aget'):
+                    cp = await checkpointer.aget(config)
+                elif hasattr(checkpointer, 'get'):
+                    cp = checkpointer.get(config)
+                else:
+                    cp = None
+                
+                if cp:
+                    if hasattr(cp, 'checkpoint_id'):
+                        clean_checkpoint_id = cp.checkpoint_id
+                    elif hasattr(cp, 'config') and hasattr(cp.config, 'configurable'):
+                        clean_checkpoint_id = cp.config.configurable.get('checkpoint_id')
+                    elif isinstance(cp, dict):
+                        clean_checkpoint_id = cp.get('checkpoint_id') or cp.get('id')
+            except Exception as e:
+                print(f"[ChatStream] Failed to get clean checkpoint: {e}")
+            
+            interrupted = False
+            final_state = {}
+            
+            try:
+                # 新对话立即通知前端
+                if not request.conversation_id:
+                    yield f"data: {json.dumps({'type': 'conversation_created', 'conversation_id': thread_id}, ensure_ascii=False)}\n\n"
+                
+                # 3. 真流式执行
+                async for event in workflow.run_stream(initial_state, thread_id=thread_id):
+                    if await req.is_disconnected():
+                        interrupted = True
+                        print(f"[ChatStream] Client disconnected, thread={thread_id}")
+                        break
+                    
+                    if event.get("type") == "token":
+                        yield f"data: {json.dumps({'type': 'token', 'content': event['content']}, ensure_ascii=False)}\n\n"
+                    elif event.get("type") == "done":
+                        final_state = event.get("state", {})
+                
+                # 4. 正常结束：发送 done 并更新统计
+                if not interrupted and final_state:
+                    memory_stats = workflow.get_memory_stats(final_state)
+                    done_event = {
+                        "type": "done",
+                        "conversation_id": final_state.get("conversation_id"),
+                        "task_id": final_state.get("task_id"),
+                        "model_id": final_state.get("used_model"),
+                        "trace": final_state.get("trace_events", []),
+                        "memory_stats": memory_stats,
+                    }
+                    yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+                    
+                    await conversation_store.update_conversation(
+                        thread_id,
+                        message_count=conv.message_count + 2 if conv else 2,
+                    )
+                    
+            except asyncio.CancelledError:
+                interrupted = True
+                print(f"[ChatStream] Stream cancelled, thread={thread_id}")
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+            finally:
+                # 5. 中断时回滚脏 checkpoint
+                if interrupted and clean_checkpoint_id:
+                    await _rollback_checkpoints(checkpointer, thread_id, clean_checkpoint_id)
+        
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     @app.get("/api/v1/history/{conversation_id}")
@@ -473,14 +589,29 @@ def create_app() -> FastAPI:
         获取当前记忆的统计信息（调试用）
         这会从 checkpoint 加载并返回统计
         """
-        # 从 checkpointer 加载状态
         config = {"configurable": {"thread_id": conversation_id}}
-        checkpoint = checkpointer.get(config)
+        try:
+            if hasattr(checkpointer, 'aget'):
+                checkpoint = await checkpointer.aget(config)
+            elif hasattr(checkpointer, 'get'):
+                checkpoint = checkpointer.get(config)
+            else:
+                checkpoint = None
+        except Exception as e:
+            print(f"[MemoryStats] Failed to load checkpoint: {e}")
+            checkpoint = None
         
         if not checkpoint:
             return {"error": "Conversation not found"}
         
-        state = checkpoint.get("channel_values", {})
+        state = {}
+        if isinstance(checkpoint, dict):
+            state = checkpoint.get("channel_values", {})
+        elif hasattr(checkpoint, "checkpoint") and isinstance(checkpoint.checkpoint, dict):
+            state = checkpoint.checkpoint.get("channel_values", {})
+        elif hasattr(checkpoint, "channel_values"):
+            state = checkpoint.channel_values
+        
         messages = state.get("messages", [])
         summary = state.get("summary", "")
         

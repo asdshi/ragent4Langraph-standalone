@@ -47,7 +47,8 @@ class MetadataEnricher(BaseTransform):
         self,
         settings: Settings,
         llm: Optional[BaseLLM] = None,
-        prompt_path: Optional[str] = None
+        prompt_path: Optional[str] = None,
+        max_workers: Optional[int] = None,
     ):
         """Initialize MetadataEnricher.
         
@@ -55,11 +56,13 @@ class MetadataEnricher(BaseTransform):
             settings: Application settings
             llm: Optional LLM instance (for testing; auto-created if None)
             prompt_path: Optional custom prompt file path
+            max_workers: Optional max parallel workers for LLM calls
         """
         self.settings = settings
         self._llm = llm
         self._prompt_template: Optional[str] = None
         self._prompt_path = prompt_path or str(resolve_path("config/prompts/metadata_enrichment.txt"))
+        self.max_workers = max_workers or DEFAULT_MAX_WORKERS
         
         # Determine if LLM should be used
         enricher_config = {}
@@ -182,7 +185,7 @@ class MetadataEnricher(BaseTransform):
         trace: Optional[TraceContext] = None
     ) -> List[Chunk]:
         """Process chunks in parallel using ThreadPoolExecutor."""
-        max_workers = min(DEFAULT_MAX_WORKERS, len(chunks))
+        max_workers = min(self.max_workers, len(chunks))
         enriched_chunks = [None] * len(chunks)
         llm_enhanced_count = 0
         fallback_count = 0

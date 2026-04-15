@@ -46,13 +46,15 @@ class ImageCaptioner(BaseTransform):
     def __init__(
         self, 
         settings: Settings, 
-        llm: Optional[BaseVisionLLM] = None
+        llm: Optional[BaseVisionLLM] = None,
+        max_workers: Optional[int] = None,
     ):
         self.settings = settings
         self.llm = None
         # Caption cache: image_id -> caption string (thread-safe with lock)
         self._caption_cache: Dict[str, str] = {}
         self._cache_lock = threading.Lock()
+        self.max_workers = max_workers or DEFAULT_MAX_WORKERS
         
         # Check if vision LLM is enabled in settings
         if self.settings.vision_llm and self.settings.vision_llm.enabled:
@@ -236,7 +238,7 @@ class ImageCaptioner(BaseTransform):
         if not images_to_caption:
             return
         
-        max_workers = min(DEFAULT_MAX_WORKERS, len(images_to_caption))
+        max_workers = min(self.max_workers, len(images_to_caption))
         logger.debug(f"Generating captions for {len(images_to_caption)} images (max_workers={max_workers})")
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

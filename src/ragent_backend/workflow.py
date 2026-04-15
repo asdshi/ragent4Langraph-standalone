@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage, AnyMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -22,7 +22,8 @@ from langgraph.graph import StateGraph, START, END
 from src.ragent_backend.schemas import RAGState, ensure_message_ids
 from src.ragent_backend.memory_manager import RollingMemoryManager
 from src.ragent_backend.store import ConversationArchiveStore
-from src.ragent_backend.intent import detect_intent, split_parallel_subqueries
+from src.ragent_backend.intent import detect_intent, analyze_query
+from src.ragent_backend.ltm_store import LTMStore
 from src.mcp_server.tools.query_knowledge_hub import QueryKnowledgeHubTool
 
 
@@ -47,10 +48,13 @@ class RAGWorkflow:
         checkpointer: Any = None,
         max_messages: int = 20,
         keep_recent: int = 4,
+        ltm_store: Optional[LTMStore] = None,
     ) -> None:
         self._store = store
         self._llm = llm
         self._checkpointer = checkpointer
+        self._ltm_store = ltm_store
+        self._token_queue: Optional[asyncio.Queue[str]] = None
         self._memory_manager = RollingMemoryManager(
             max_messages=max_messages,
             keep_recent=keep_recent
@@ -61,9 +65,6 @@ class RAGWorkflow:
 
     def _build_graph(self):
         """构建工作流图"""
-        from langgraph.types import Command
-        self._command_cls = Command
-
         graph = StateGraph(RAGState)
 
         # 添加节点
@@ -77,13 +78,23 @@ class RAGWorkflow:
         # 添加边
         graph.add_edge(START, "session")
         graph.add_edge("session", "intent")
-        graph.add_edge("intent", "retrieve")
+        graph.add_conditional_edges(
+            "intent",
+            self._route_after_intent,
+            {"retrieve": "retrieve", "archive": "archive"}
+        )
         graph.add_edge("retrieve", "generate")
         graph.add_edge("generate", "memory_manage")
         graph.add_edge("memory_manage", "archive")
         graph.add_edge("archive", END)
 
         return graph.compile(checkpointer=self._checkpointer)
+
+    def _route_after_intent(self, state: RAGState) -> str:
+        """根据意图判断结果决定下一步走向"""
+        if state.get("need_clarify"):
+            return "archive"
+        return "retrieve"
 
     async def run(
         self, 
@@ -104,6 +115,76 @@ class RAGWorkflow:
         initial_state.setdefault("messages", []).append(user_message)
         
         return await self._compiled.ainvoke(initial_state, config)
+
+    async def run_stream(
+        self,
+        initial_state: Dict[str, Any],
+        thread_id: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        流式运行工作流。
+        
+        在 generate 节点内部通过 llm.astream() 实时产生 token，
+        并通过 asyncio.Queue 逐 token yield 给调用方。
+        
+        Yields:
+            {"type": "token", "content": str}
+            {"type": "done", "state": RAGState}
+        """
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        # 添加用户输入到 messages
+        user_message = HumanMessage(content=initial_state["query"])
+        initial_state.setdefault("messages", []).append(user_message)
+        
+        self._token_queue = asyncio.Queue()
+        graph_task = asyncio.create_task(self._compiled.ainvoke(initial_state, config))
+        token_yielded = False
+        
+        try:
+            while True:
+                if graph_task.done():
+                    # 清空剩余 token
+                    while not self._token_queue.empty():
+                        token = self._token_queue.get_nowait()
+                        yield {"type": "token", "content": token}
+                        token_yielded = True
+                    break
+                
+                queue_task = asyncio.create_task(self._token_queue.get())
+                done, pending = await asyncio.wait(
+                    [graph_task, queue_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                
+                if queue_task in done:
+                    token = queue_task.result()
+                    yield {"type": "token", "content": token}
+                    token_yielded = True
+                else:
+                    queue_task.cancel()
+                    try:
+                        await queue_task
+                    except asyncio.CancelledError:
+                        pass
+            
+            final_state = await graph_task
+            
+            # 兜底：如果 generate 节点被跳过（如 need_clarify）或出错未吐 token，
+            # 直接把 final_answer 作为 token 吐出，避免前端空屏卡死
+            if not token_yielded and final_state.get("final_answer"):
+                yield {"type": "token", "content": final_state["final_answer"]}
+            
+            yield {"type": "done", "state": final_state}
+        finally:
+            self._token_queue = None
+            # 外部中断时取消后台 LangGraph 任务，防止继续写脏 checkpoint
+            if not graph_task.done():
+                graph_task.cancel()
+                try:
+                    await graph_task
+                except asyncio.CancelledError:
+                    pass
 
     async def _session_node(self, state: RAGState) -> Dict[str, Any]:
         """
@@ -129,6 +210,23 @@ class RAGWorkflow:
         # 初始化默认值
         state.setdefault("messages", [])
         state.setdefault("summary", "")
+        state.setdefault("memories", [])
+        
+        # 召回长期记忆（跨会话认知连续）
+        if self._ltm_store and state.get("user_id"):
+            try:
+                query = state.get("rewritten_query") or state.get("query", "")
+                memories = self._ltm_store.retrieve_facts(
+                    user_id=state["user_id"],
+                    query=query,
+                    top_k=3,
+                )
+                if memories:
+                    state["memories"] = memories
+                    print(f"[Session] Recalled {len(memories)} LTM facts for user {state['user_id']}")
+            except Exception as e:
+                print(f"[Session] LTM recall failed: {e}")
+        
         state.setdefault("trace_events", []).append(
             {"node": "session", "ts": time.time(), "ok": True}
         )
@@ -136,16 +234,32 @@ class RAGWorkflow:
         return state
 
     async def _intent_node(self, state: RAGState) -> Any:
-        """意图识别节点"""
+        """意图识别节点：结构化 LLM 一次完成指代消解 + 子查询拆分"""
         query = state["query"]
-        has_history = len(state.get("messages", [])) > 1
+        messages = state.get("messages", [])
         
-        # 意图识别
-        intent = detect_intent(query, has_history=has_history)
-        sub_queries = split_parallel_subqueries(intent.rewritten_query)
+        # 单次结构化调用：重写 + 拆分
+        try:
+            analysis = await analyze_query(
+                query=query,
+                messages=messages,
+                llm=self._llm
+            )
+            rewritten_query = analysis.rewritten_query
+            sub_queries = analysis.sub_queries
+        except Exception as e:
+            print(f"[Intent] Structured analysis failed: {e}")
+            rewritten_query = query
+            sub_queries = [query]
+        
+        # 意图识别（基于重写后的查询）
+        intent = detect_intent(rewritten_query)
+        # 如果 LLM 说需要澄清，以 detect_intent 的结果为准做二次确认
+        if intent.need_clarify:
+            sub_queries = [intent.rewritten_query]
         
         update = {
-            "rewritten_query": intent.rewritten_query,
+            "rewritten_query": rewritten_query,
             "sub_queries": sub_queries,
             "intent_confidence": intent.confidence,
             "need_clarify": intent.need_clarify,
@@ -158,15 +272,16 @@ class RAGWorkflow:
                     "confidence": intent.confidence,
                     "need_clarify": intent.need_clarify,
                     "sub_query_count": len(sub_queries),
+                    "rewritten": rewritten_query != query,
+                    "original_query": query,
                 }
             ],
         }
         
-        # 如果需要澄清，直接跳过后续节点
+        # 如果需要澄清，提前设置 final_answer
         if intent.need_clarify:
             update["final_answer"] = intent.clarify_prompt or "请补充更多信息。"
             update["used_model"] = "intent-shortcircuit"
-            return self._command_cls(update=update, goto="archive")
         
         return update
 
@@ -215,15 +330,20 @@ class RAGWorkflow:
             }
 
     async def _generate_node(self, state: RAGState) -> Dict[str, Any]:
-        """生成回复节点"""
+        """生成回复节点（支持内部流式输出）"""
         
         # 构建 prompt
         prompt = self._build_prompt(state)
         
-        # 调用 LLM
+        # 调用 LLM（流式收集，同时透传 token）
         try:
-            response = await self._llm.ainvoke([HumanMessage(content=prompt)])
-            answer = response.content
+            chunks = []
+            async for chunk in self._llm.astream([HumanMessage(content=prompt)]):
+                chunks.append(chunk)
+                if self._token_queue is not None:
+                    await self._token_queue.put(chunk.content)
+            
+            answer = "".join(c.content for c in chunks)
             model_name = getattr(self._llm, "model_name", "unknown")
         except Exception as e:
             answer = f"生成失败：{str(e)}"
@@ -248,7 +368,10 @@ class RAGWorkflow:
         # 格式化最近对话历史（仅用于展示，实际 history 通过 messages 传递）
         recent_history = self._format_recent_messages(state.get("messages", []))
         
-        prompt = ChatPromptTemplate.from_template("""你是企业级知识库助手，基于检索结果和对话历史回答用户问题。
+        prompt = ChatPromptTemplate.from_template("""你是企业级知识库助手，基于检索结果、对话历史和用户长期记忆回答用户问题。
+
+【用户长期记忆】
+{memories}
 
 【历史摘要】
 {summary}
@@ -264,7 +387,9 @@ class RAGWorkflow:
 
 请给出准确、有用的回答：""")
 
+        memories_text = "\n".join(f"- {m}" for m in state.get("memories", [])) or "无"
         return prompt.format(
+            memories=memories_text,
             summary=state.get("summary", ""),
             recent_history=recent_history,
             context=state.get("retrieval_context", ""),
@@ -332,6 +457,7 @@ class RAGWorkflow:
         总是运行，负责：
         1. 将被压缩的消息归档到 MySQL
         2. 将本轮新消息归档到 MySQL
+        3. 从本轮 Q&A 中提取长期记忆（LTM）
         
         使用 asyncio.create_task 异步执行，不阻塞响应
         """
@@ -372,6 +498,22 @@ class RAGWorkflow:
                     print(f"[Archive] Failed to save history: {e}")
             
             task.add_done_callback(on_done)
+        
+        # 5. 长期记忆提取（异步，不阻塞响应）
+        user_id = state.get("user_id")
+        if self._ltm_store and user_id and len(messages) >= 2:
+            query = state.get("query", "")
+            answer = state.get("final_answer", "")
+            if query and answer:
+                async def _extract_and_save():
+                    try:
+                        facts = await self._ltm_store.extract_facts(query, answer, self._llm)
+                        if facts:
+                            self._ltm_store.save_facts(user_id, facts)
+                            print(f"[Archive] Extracted {len(facts)} LTM facts for user {user_id}")
+                    except Exception as e:
+                        print(f"[Archive] LTM extraction failed: {e}")
+                asyncio.create_task(_extract_and_save())
         
         # 添加追踪事件
         state.setdefault("trace_events", []).append(

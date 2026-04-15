@@ -79,6 +79,7 @@ class OpenAILLM(BaseLLM):
         
         # Azure-compatible mode detection
         azure_endpoint = getattr(settings.llm, 'azure_endpoint', None)
+        config_base_url = getattr(settings.llm, 'base_url', None)
         self.api_version = getattr(settings.llm, 'api_version', None)
         
         if base_url:
@@ -91,6 +92,9 @@ class OpenAILLM(BaseLLM):
             self._use_azure_auth = True
             if not self.api_version:
                 self.api_version = "2024-02-15-preview"
+        elif config_base_url:
+            self.base_url = config_base_url
+            self._use_azure_auth = False
         else:
             self.base_url = self.DEFAULT_BASE_URL
             self._use_azure_auth = False

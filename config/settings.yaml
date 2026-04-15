@@ -92,6 +92,7 @@ ingestion:
   chunk_overlap: 200
   splitter: "recursive"  # Options: recursive, semantic, fixed_length
   batch_size: 100
+  max_workers: 3  # Transform 阶段 LLM 调用的最大并发数
   
   # Chunk Refiner Configuration (C5)
   chunk_refiner:

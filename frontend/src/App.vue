@@ -84,21 +84,20 @@
           </div>
           
           <!-- 上传区域 -->
-          <el-upload
-            class="upload-area"
-            drag
-            action=""
-            :auto-upload="false"
-            :on-change="handleFileChange"
-            :show-file-list="false"
+          <input
+            ref="fileInput"
+            type="file"
+            style="display: none"
             accept=".pdf,.docx,.txt,.md,.csv,.xlsx"
-          >
+            @change="handleFileSelect"
+          />
+          <div class="upload-area" @click="fileInput?.click()">
             <el-icon class="upload-icon"><Upload /></el-icon>
             <div class="upload-text">
-              <div>点击或拖拽上传文件</div>
-              <div class="upload-hint">支持 PDF, Word, TXT, CSV</div>
+              <div>点击上传文件</div>
+              <div class="upload-hint">支持 PDF, Word, TXT, CSV, Excel</div>
             </div>
-          </el-upload>
+          </div>
           
           <!-- 文件列表 -->
           <div class="file-list">
@@ -259,13 +258,23 @@
               @keydown="handleKeydown"
             />
             <el-button
+              v-if="!isTyping"
               type="primary"
               circle
               class="send-btn"
-              :disabled="!inputMessage.trim() || isTyping"
+              :disabled="!inputMessage.trim()"
               @click="sendMessage"
             >
               <el-icon><Promotion /></el-icon>
+            </el-button>
+            <el-button
+              v-else
+              type="danger"
+              circle
+              class="send-btn"
+              @click="stopGeneration"
+            >
+              <el-icon><CircleClose /></el-icon>
             </el-button>
           </div>
           <div class="input-hint">
@@ -324,6 +333,7 @@ const isTyping = ref(false)
 const conversationId = ref(null)
 const files = ref([])
 const messagesContainer = ref(null)
+const fileInput = ref(null)
 const settingsVisible = ref(false)
 const conversations = ref([])
 
@@ -331,9 +341,11 @@ const conversations = ref([])
 const settings = reactive({
   apiBase: '/api/v1',  // 使用相对路径，让 Vite 代理生效
   topK: 5,
-  streaming: false,  // 默认关闭流式，避免 405 错误
+  streaming: true,  // 默认开启真流式
   model: 'qwen3.5-omni-flash'
 })
+
+const abortController = ref(null)
 
 const apiBase = ref(settings.apiBase)
 
@@ -503,6 +515,7 @@ async function sendNormalMessage(query) {
   try {
     const response = await axios.post(`${settings.apiBase}/chat`, {
       query,
+      user_id: '1',
       conversation_id: conversationId.value,
       top_k: settings.topK,
       model: settings.model
@@ -532,6 +545,15 @@ async function sendNormalMessage(query) {
   }
 }
 
+// 停止生成
+function stopGeneration() {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+    isTyping.value = false
+  }
+}
+
 // 流式消息发送
 async function sendStreamMessage(query) {
   isTyping.value = true
@@ -544,12 +566,16 @@ async function sendStreamMessage(query) {
   }
   messages.value.push(assistantMessage)
   
+  abortController.value = new AbortController()
+  
   try {
     const response = await fetch(`${settings.apiBase}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: abortController.value.signal,
       body: JSON.stringify({
         query,
+        user_id: '1',
         conversation_id: conversationId.value,
         top_k: settings.topK,
         model: settings.model
@@ -576,8 +602,8 @@ async function sendStreamMessage(query) {
               newConvId = data.conversation_id
             }
             
-            if (data.token) {
-              assistantMessage.content += data.token
+            if (data.content) {
+              assistantMessage.content += data.content
               // 触发更新
               messages.value = [...messages.value]
               scrollToBottom()
@@ -601,10 +627,15 @@ async function sendStreamMessage(query) {
       loadConversations()  // 刷新对话列表
     }
   } catch (error) {
-    assistantMessage.content += '\n\n[错误: ' + error.message + ']'
+    if (error.name === 'AbortError') {
+      assistantMessage.content += '\n\n[已停止生成]'
+    } else {
+      assistantMessage.content += '\n\n[错误: ' + error.message + ']'
+      ElMessage.error('流式输出失败: ' + error.message)
+    }
     messages.value = [...messages.value]
-    ElMessage.error('流式输出失败: ' + error.message)
   } finally {
+    abortController.value = null
     isTyping.value = false
     scrollToBottom()
   }
@@ -627,8 +658,14 @@ async function loadHistory(convId) {
 }
 
 // 文件处理
-function handleFileChange(file) {
-  uploadFile(file.raw)
+function handleFileSelect(event) {
+  const file = event.target.files?.[0]
+  console.log('[Upload] handleFileSelect called', file)
+  if (file) {
+    uploadFile(file)
+  }
+  // 重置 input 允许重复选择同一文件
+  event.target.value = ''
 }
 
 async function uploadFile(file) {
@@ -918,17 +955,19 @@ watch(messages, () => {
 
 .upload-area {
   margin-bottom: 16px;
-}
-
-.upload-area :deep(.el-upload-dragger) {
   width: 100%;
   height: 140px;
   border: 2px dashed #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
-.upload-area :deep(.el-upload-dragger:hover) {
+.upload-area:hover {
   border-color: #667eea;
   background: #f1f5f9;
 }

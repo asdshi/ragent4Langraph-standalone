@@ -153,15 +153,19 @@ class IngestionPipeline:
         logger.info("  ✓ DocumentChunker initialized")
         
         # 阶段 4：文本/图像变换增强
-        self.chunk_refiner = ChunkRefiner(settings)
-        logger.info(f"  ✓ ChunkRefiner initialized (use_llm={self.chunk_refiner.use_llm})")
+        # 读取最大并发 workers 配置，控制 LLM 调用速率，防止 API 配额/内存被打爆
+        ingest_cfg = settings.ingestion if settings.ingestion else {}
+        max_workers = getattr(ingest_cfg, 'max_workers', None) if hasattr(ingest_cfg, 'max_workers') else ingest_cfg.get('max_workers', None)
         
-        self.metadata_enricher = MetadataEnricher(settings)
-        logger.info(f"  ✓ MetadataEnricher initialized (use_llm={self.metadata_enricher.use_llm})")
+        self.chunk_refiner = ChunkRefiner(settings, max_workers=max_workers)
+        logger.info(f"  ✓ ChunkRefiner initialized (use_llm={self.chunk_refiner.use_llm}, max_workers={self.chunk_refiner.max_workers})")
         
-        self.image_captioner = ImageCaptioner(settings)
+        self.metadata_enricher = MetadataEnricher(settings, max_workers=max_workers)
+        logger.info(f"  ✓ MetadataEnricher initialized (use_llm={self.metadata_enricher.use_llm}, max_workers={self.metadata_enricher.max_workers})")
+        
+        self.image_captioner = ImageCaptioner(settings, max_workers=max_workers)
         has_vision = self.image_captioner.llm is not None
-        logger.info(f"  ✓ ImageCaptioner initialized (vision_enabled={has_vision})")
+        logger.info(f"  ✓ ImageCaptioner initialized (vision_enabled={has_vision}, max_workers={self.image_captioner.max_workers})")
         
         # 阶段 5：编码器
         # DenseEncoder 负责语义向量，SparseEncoder 负责关键词统计。
@@ -486,6 +490,7 @@ class IngestionPipeline:
             # 注意：PdfLoader 已负责落盘图片文件，这里只登记“可检索索引”。
             logger.info("  6c. Image Storage Index...")
             images = document.metadata.get("images", [])
+            registered_image_ids: List[str] = []
             for img in images:
                 img_path = Path(img["path"])
                 if img_path.exists():
@@ -496,6 +501,7 @@ class IngestionPipeline:
                         doc_hash=file_hash,
                         page_num=img.get("page", 0)
                     )
+                    registered_image_ids.append(img["id"])
             logger.info(f"      Indexed {len(images)} images")
             
             stages["storage"] = {
@@ -570,8 +576,16 @@ class IngestionPipeline:
             )
             
         except Exception as e:
-            # 统一兜底：记录失败并写入完整性表，供后续重试与排障使用。
+            # 统一兜底：记录失败、回滚已写入的脏数据，并写入完整性表供后续重试。
             logger.error(f"❌ Pipeline failed: {e}", exc_info=True)
+
+            # 安全地提取可能已生成的数据用于回滚
+            _vector_ids = locals().get("vector_ids")
+            _doc_id = locals().get("document")
+            _doc_id = _doc_id.id if _doc_id else None
+            _registered_images = locals().get("registered_image_ids")
+            self._rollback_storage(_vector_ids, _doc_id, _registered_images)
+
             self.integrity_checker.mark_failed(file_hash, str(file_path), str(e))
             
             return PipelineResult(
@@ -582,6 +596,50 @@ class IngestionPipeline:
                 stages=stages
             )
     
+    async def arun(
+        self,
+        file_path: str,
+        trace: Optional[TraceContext] = None,
+        on_progress: Optional[Callable[[str, int, int], None]] = None,
+    ) -> PipelineResult:
+        """异步执行单文件完整摄取流程。
+        
+        内部通过 asyncio.to_thread 将同步的 run() 放到线程池中执行，
+        避免阻塞调用方的事件循环。Transform 阶段各组件内部仍使用
+        ThreadPoolExecutor 并发处理 chunks。
+        """
+        import asyncio
+        return await asyncio.to_thread(self.run, file_path, trace, on_progress)
+    
+    def _rollback_storage(
+        self,
+        vector_ids: Optional[List[str]] = None,
+        doc_id: Optional[str] = None,
+        registered_images: Optional[List[str]] = None,
+    ) -> None:
+        """摄取失败时清理已写入的部分数据，防止存储层不一致。"""
+        if vector_ids:
+            try:
+                self.vector_upserter.vector_store.delete(vector_ids)
+                logger.info(f"  Rolled back {len(vector_ids)} vectors from ChromaDB")
+            except Exception as rollback_e:
+                logger.warning(f"  Failed to rollback vectors: {rollback_e}")
+
+        if doc_id:
+            try:
+                self.bm25_indexer.remove_document(doc_id, collection=self.collection)
+                logger.info(f"  Rolled back BM25 index for doc_id={doc_id}")
+            except Exception as rollback_e:
+                logger.warning(f"  Failed to rollback BM25 index: {rollback_e}")
+
+        if registered_images:
+            for img_id in registered_images:
+                try:
+                    self.image_storage.delete_image(img_id, remove_file=False)
+                    logger.info(f"  Rolled back image index {img_id}")
+                except Exception as rollback_e:
+                    logger.warning(f"  Failed to rollback image {img_id}: {rollback_e}")
+
     def close(self) -> None:
         """释放外部资源。
 
