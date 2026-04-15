@@ -175,6 +175,15 @@
           </div>
           
           <div class="header-right">
+            <el-tooltip content="LangGraph 追踪" placement="bottom">
+              <el-button
+                circle
+                :type="showTracePanel ? 'primary' : 'default'"
+                @click="showTracePanel = !showTracePanel"
+              >
+                <el-icon><DataLine /></el-icon>
+              </el-button>
+            </el-tooltip>
             <el-tooltip content="设置" placement="bottom">
               <el-button circle @click="showSettings">
                 <el-icon><Setting /></el-icon>
@@ -293,6 +302,10 @@
           </div>
         </div>
       </el-main>
+      
+      <el-aside v-if="showTracePanel" width="360px" class="trace-sidebar">
+        <TracePanel :traces="traceEvents" />
+      </el-aside>
     </el-container>
     
     <!-- 设置对话框 -->
@@ -332,9 +345,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
+import TracePanel from './components/TracePanel.vue'
 
 // ==================== 状态管理 ====================
 const messages = ref([])
@@ -356,6 +370,9 @@ const settings = reactive({
 })
 
 const abortController = ref(null)
+const traceEvents = ref([])
+const showTracePanel = ref(true)
+const traceWs = ref(null)
 
 const apiBase = ref(settings.apiBase)
 
@@ -424,9 +441,11 @@ async function refreshConversations() {
 async function switchConversation(convId) {
   if (convId === conversationId.value) return
   
+  disconnectTraceWs()
   conversationId.value = convId
   messages.value = []
   files.value = []
+  traceEvents.value = []
   localStorage.setItem('currentConversationId', convId)
   
   // 加载历史消息
@@ -564,9 +583,51 @@ function stopGeneration() {
   }
 }
 
+// WebSocket 追踪连接
+function connectTraceWs(convId) {
+  if (!convId || convId.startsWith('temp_')) return
+  disconnectTraceWs()
+  traceEvents.value = []
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/ws/trace/${convId}`
+  const ws = new WebSocket(wsUrl)
+  traceWs.value = ws
+
+  ws.onopen = () => {
+    console.log('[TraceWS] connected', convId)
+  }
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.type === 'trace') {
+        traceEvents.value.push(data)
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  ws.onerror = (e) => {
+    console.error('[TraceWS] error', e)
+  }
+  ws.onclose = () => {
+    traceWs.value = null
+  }
+}
+
+function disconnectTraceWs() {
+  if (traceWs.value) {
+    traceWs.value.close()
+    traceWs.value = null
+  }
+}
+
 // 流式消息发送
 async function sendStreamMessage(query) {
   isTyping.value = true
+  traceEvents.value = []
+  if (conversationId.value) {
+    connectTraceWs(conversationId.value)
+  }
   
   const assistantMessage = {
     role: 'assistant',
@@ -610,6 +671,7 @@ async function sendStreamMessage(query) {
             
             if (data.conversation_id && !conversationId.value) {
               newConvId = data.conversation_id
+              connectTraceWs(newConvId)
             }
             
             if (data.content) {
@@ -882,6 +944,10 @@ function renderMarkdown(text) {
 // 监听消息变化，自动滚动
 watch(messages, () => {
   scrollToBottom()
+})
+
+onUnmounted(() => {
+  disconnectTraceWs()
 })
 </script>
 
@@ -1495,5 +1561,27 @@ watch(messages, () => {
   .message {
     max-width: 95%;
   }
+}
+
+/* 右侧追踪面板 */
+.trace-sidebar {
+  background: linear-gradient(180deg, #0b0f19 0%, #111827 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.35s ease;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 头部按钮间距 */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

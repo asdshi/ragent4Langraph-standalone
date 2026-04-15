@@ -25,7 +25,7 @@ except ImportError:
     pass  # python-dotenv 未安装
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -123,6 +123,26 @@ async def _rollback_checkpoints(checkpointer, thread_id: str, clean_checkpoint_i
 
 # 全局并发控制：限制同时执行的 ingest 后台任务数量，防止 LLM API 配额和内存被打爆
 INGEST_SEMAPHORE = asyncio.Semaphore(2)
+
+# WebSocket 连接管理：conversation_id -> list[WebSocket]
+active_trace_ws: dict[str, list[WebSocket]] = {}
+
+async def broadcast_trace(conversation_id: str, data: dict) -> None:
+    """向该对话的所有 WebSocket 客户端广播 trace 事件"""
+    sockets = active_trace_ws.get(conversation_id, [])
+    if not sockets:
+        return
+    dead = []
+    for ws in sockets:
+        try:
+            await ws.send_json(data)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        try:
+            sockets.remove(ws)
+        except ValueError:
+            pass
 
 
 # 允许上传的文件扩展名白名单
@@ -570,7 +590,9 @@ def create_app() -> FastAPI:
                         print(f"[ChatStream] Client disconnected, thread={thread_id}")
                         break
                     
-                    if event.get("type") == "token":
+                    if event.get("type") == "trace":
+                        await broadcast_trace(thread_id, event)
+                    elif event.get("type") == "token":
                         yield f"data: {json.dumps({'type': 'token', 'content': event['content']}, ensure_ascii=False)}\n\n"
                     elif event.get("type") == "done":
                         final_state = event.get("state", {})
@@ -604,6 +626,26 @@ def create_app() -> FastAPI:
                     await _rollback_checkpoints(checkpointer, thread_id, clean_checkpoint_id)
         
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.websocket("/ws/trace/{conversation_id}")
+    async def trace_websocket(websocket: WebSocket, conversation_id: str):
+        """LangGraph 实时追踪 WebSocket：推送节点级执行进度"""
+        await websocket.accept()
+        active_trace_ws.setdefault(conversation_id, []).append(websocket)
+        try:
+            while True:
+                # 保持连接，接收前端心跳/指令（如中断请求可扩展）
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+        except WebSocketDisconnect:
+            pass
+        finally:
+            sockets = active_trace_ws.get(conversation_id, [])
+            if websocket in sockets:
+                sockets.remove(websocket)
+            if not sockets:
+                active_trace_ws.pop(conversation_id, None)
 
     @app.get("/api/v1/history/{conversation_id}")
     async def get_history(conversation_id: str) -> dict:

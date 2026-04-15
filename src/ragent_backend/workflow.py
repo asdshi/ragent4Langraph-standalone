@@ -55,6 +55,7 @@ class RAGWorkflow:
         self._checkpointer = checkpointer
         self._ltm_store = ltm_store
         self._token_queue: Optional[asyncio.Queue[str]] = None
+        self._trace_queue: Optional[asyncio.Queue[Dict[str, Any]]] = None
         self._memory_manager = RollingMemoryManager(
             max_messages=max_messages,
             keep_recent=keep_recent
@@ -95,6 +96,26 @@ class RAGWorkflow:
         if state.get("need_clarify"):
             return "archive"
         return "retrieve"
+
+    def _emit_trace(
+        self,
+        node: str,
+        step: str,
+        status: str = "running",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """将 trace 事件推送到 trace_queue（仅在流式模式下）"""
+        if self._trace_queue is not None:
+            asyncio.create_task(
+                self._trace_queue.put({
+                    "type": "trace",
+                    "node": node,
+                    "step": step,
+                    "status": status,
+                    "payload": payload or {},
+                    "ts": time.time(),
+                })
+            )
 
     async def run(
         self, 
@@ -138,12 +159,16 @@ class RAGWorkflow:
         initial_state.setdefault("messages", []).append(user_message)
         
         self._token_queue = asyncio.Queue()
+        self._trace_queue = asyncio.Queue()
         graph_task = asyncio.create_task(self._compiled.ainvoke(initial_state, config))
         token_yielded = False
         
         try:
             while True:
                 if graph_task.done():
+                    # 清空剩余 trace
+                    while not self._trace_queue.empty():
+                        yield self._trace_queue.get_nowait()
                     # 清空剩余 token
                     while not self._token_queue.empty():
                         token = self._token_queue.get_nowait()
@@ -151,20 +176,31 @@ class RAGWorkflow:
                         token_yielded = True
                     break
                 
-                queue_task = asyncio.create_task(self._token_queue.get())
+                token_task = asyncio.create_task(self._token_queue.get())
+                trace_task = asyncio.create_task(self._trace_queue.get())
                 done, pending = await asyncio.wait(
-                    [graph_task, queue_task],
+                    [graph_task, token_task, trace_task],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 
-                if queue_task in done:
-                    token = queue_task.result()
-                    yield {"type": "token", "content": token}
-                    token_yielded = True
-                else:
-                    queue_task.cancel()
+                for t in pending:
+                    t.cancel()
                     try:
-                        await queue_task
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                
+                if token_task in done:
+                    try:
+                        token = token_task.result()
+                        yield {"type": "token", "content": token}
+                        token_yielded = True
+                    except asyncio.CancelledError:
+                        pass
+                
+                if trace_task in done:
+                    try:
+                        yield trace_task.result()
                     except asyncio.CancelledError:
                         pass
             
@@ -178,6 +214,7 @@ class RAGWorkflow:
             yield {"type": "done", "state": final_state}
         finally:
             self._token_queue = None
+            self._trace_queue = None
             # 外部中断时取消后台 LangGraph 任务，防止继续写脏 checkpoint
             if not graph_task.done():
                 graph_task.cancel()
@@ -195,6 +232,8 @@ class RAGWorkflow:
         - 这里只需要确保 conversation_id 存在
         - 确保所有消息都有 ID（RemoveMessage 依赖）
         """
+        self._emit_trace("session", "node_start", "running")
+        
         # 确保 conversation_id
         if not state.get("conversation_id"):
             state["conversation_id"] = str(uuid.uuid4())
@@ -231,14 +270,18 @@ class RAGWorkflow:
             {"node": "session", "ts": time.time(), "ok": True}
         )
         
+        self._emit_trace("session", "node_end", "success")
         return state
 
     async def _intent_node(self, state: RAGState) -> Any:
         """意图识别节点：结构化 LLM 一次完成指代消解 + 子查询拆分"""
+        self._emit_trace("intent", "node_start", "running")
+        
         query = state["query"]
         messages = state.get("messages", [])
         
         # 单次结构化调用：重写 + 拆分
+        self._emit_trace("intent", "query_rewrite", "running", {"original_query": query})
         try:
             analysis = await analyze_query(
                 query=query,
@@ -253,10 +296,18 @@ class RAGWorkflow:
             sub_queries = [query]
         
         # 意图识别（基于重写后的查询）
+        self._emit_trace("intent", "intent_detect", "running")
         intent = detect_intent(rewritten_query)
+        self._emit_trace("intent", "intent_detect", "success", {
+            "confidence": intent.confidence,
+            "need_clarify": intent.need_clarify,
+        })
         # 如果 LLM 说需要澄清，以 detect_intent 的结果为准做二次确认
         if intent.need_clarify:
             sub_queries = [intent.rewritten_query]
+            self._emit_trace("intent", "clarify_shortcircuit", "running", {
+                "clarify_prompt": intent.clarify_prompt or "",
+            })
         
         update = {
             "rewritten_query": rewritten_query,
@@ -283,14 +334,26 @@ class RAGWorkflow:
             update["final_answer"] = intent.clarify_prompt or "请补充更多信息。"
             update["used_model"] = "intent-shortcircuit"
         
+        self._emit_trace("intent", "node_end", "success", {
+            "need_clarify": intent.need_clarify,
+            "sub_query_count": len(sub_queries),
+        })
         return update
 
     async def _retrieve_node(self, state: RAGState) -> Dict[str, Any]:
         """检索节点 - 接入真实的 RAG MCP 检索"""
+        self._emit_trace("retrieve", "node_start", "running")
+        
         query = state.get("rewritten_query") or state["query"]
         conversation_id = state["conversation_id"]
         # 构建对话级 collection 名称
         collection = f"conv_{conversation_id}"
+        
+        self._emit_trace("retrieve", "knowledge_retrieval", "running", {
+            "query": query,
+            "collection": collection,
+            "top_k": state.get("top_k", 5),
+        })
         
         try:
             # 调用 RAG MCP 检索工具
@@ -303,6 +366,11 @@ class RAGWorkflow:
             # retrieval_result 是 MCPToolResponse 对象
             context_text = retrieval_result.content
             
+            self._emit_trace("retrieve", "knowledge_retrieval", "success", {
+                "collection": collection,
+                "result_count": retrieval_result.metadata.get("result_count", 0) if hasattr(retrieval_result, "metadata") else 0,
+            })
+            self._emit_trace("retrieve", "node_end", "success")
             return {
                 "retrieval_context": context_text,
                 "retrieval_contexts": [context_text],
@@ -320,6 +388,8 @@ class RAGWorkflow:
         except Exception as e:
             # 检索失败时返回提示，不中断工作流
             print(f"[Retrieve] Error: {e}")
+            self._emit_trace("retrieve", "knowledge_retrieval", "error", {"error": str(e)})
+            self._emit_trace("retrieve", "node_end", "error")
             return {
                 "retrieval_context": "该对话暂无文件或检索服务暂时不可用。",
                 "retrieval_contexts": [],
@@ -331,11 +401,15 @@ class RAGWorkflow:
 
     async def _generate_node(self, state: RAGState) -> Dict[str, Any]:
         """生成回复节点（支持内部流式输出）"""
+        self._emit_trace("generate", "node_start", "running")
         
         # 构建 prompt
+        self._emit_trace("generate", "prompt_build", "running")
         prompt = self._build_prompt(state)
+        self._emit_trace("generate", "prompt_build", "success", {"prompt_length": len(prompt)})
         
         # 调用 LLM（流式收集，同时透传 token）
+        self._emit_trace("generate", "llm_stream", "running")
         try:
             chunks = []
             async for chunk in self._llm.astream([HumanMessage(content=prompt)]):
@@ -345,13 +419,19 @@ class RAGWorkflow:
             
             answer = "".join(c.content for c in chunks)
             model_name = getattr(self._llm, "model_name", "unknown")
+            self._emit_trace("generate", "llm_stream", "success", {
+                "model": model_name,
+                "token_count": len(chunks),
+            })
         except Exception as e:
             answer = f"生成失败：{str(e)}"
             model_name = "error"
+            self._emit_trace("generate", "llm_stream", "error", {"error": str(e)})
         
         # 添加助手回复到 messages
         assistant_message = AIMessage(content=answer)
         
+        self._emit_trace("generate", "node_end", "success" if model_name != "error" else "error")
         return {
             "messages": [assistant_message],  # add_messages 会追加
             "final_answer": answer,
@@ -413,6 +493,7 @@ class RAGWorkflow:
         3. 将删除的消息合并到 summary 中
         4. 标记待归档的消息供 archive 节点使用
         """
+        self._emit_trace("memory_manage", "node_start", "running")
         messages = state.get("messages", [])
         
         # 检查结果
@@ -421,34 +502,53 @@ class RAGWorkflow:
         }
         
         # 检查是否需要压缩
+        self._emit_trace("memory_manage", "compact_check", "running", {"message_count": len(messages)})
         if not self._memory_manager.should_compact(messages):
             # 不需要压缩，但本轮新消息仍需归档
             # archive 节点会处理
+            self._emit_trace("memory_manage", "compact_check", "success", {"need_compact": False})
+            self._emit_trace("memory_manage", "node_end", "success")
             return result
         
+        self._emit_trace("memory_manage", "compact_check", "success", {"need_compact": True})
+        
         # 执行压缩
-        to_keep, new_summary, archived_data = await self._memory_manager.compact(
-            messages=messages,
-            current_summary=state.get("summary", ""),
-            llm=self._llm
-        )
-        
-        # 生成 RemoveMessage 操作（关键！）
-        keep_ids = {m.id for m in to_keep}
-        delete_ops = [
-            RemoveMessage(id=m.id)
-            for m in messages
-            if m.id not in keep_ids
-        ]
-        
-        print(f"[MemoryManage] Compacting: {len(messages)} -> {len(to_keep)} messages, "
-              f"archived {len(archived_data)}, summary length {len(new_summary)}")
-        
-        return {
-            "messages": delete_ops,           # LangGraph 会处理删除
-            "summary": new_summary,           # 更新摘要
-            "_to_archive": archived_data,     # 标记待归档
-        }
+        self._emit_trace("memory_manage", "memory_compact", "running")
+        try:
+            to_keep, new_summary, archived_data = await self._memory_manager.compact(
+                messages=messages,
+                current_summary=state.get("summary", ""),
+                llm=self._llm
+            )
+            
+            # 生成 RemoveMessage 操作（关键！）
+            keep_ids = {m.id for m in to_keep}
+            delete_ops = [
+                RemoveMessage(id=m.id)
+                for m in messages
+                if m.id not in keep_ids
+            ]
+            
+            print(f"[MemoryManage] Compacting: {len(messages)} -> {len(to_keep)} messages, "
+                  f"archived {len(archived_data)}, summary length {len(new_summary)}")
+            
+            self._emit_trace("memory_manage", "memory_compact", "success", {
+                "before_count": len(messages),
+                "after_count": len(to_keep),
+                "archived_count": len(archived_data),
+            })
+            self._emit_trace("memory_manage", "node_end", "success")
+            
+            return {
+                "messages": delete_ops,           # LangGraph 会处理删除
+                "summary": new_summary,           # 更新摘要
+                "_to_archive": archived_data,     # 标记待归档
+            }
+        except Exception as e:
+            print(f"[MemoryManage] Compact failed: {e}")
+            self._emit_trace("memory_manage", "memory_compact", "error", {"error": str(e)})
+            self._emit_trace("memory_manage", "node_end", "error")
+            return result
 
     async def _archive_node(self, state: RAGState) -> Dict[str, Any]:
         """
@@ -461,6 +561,7 @@ class RAGWorkflow:
         
         使用 asyncio.create_task 异步执行，不阻塞响应
         """
+        self._emit_trace("archive", "node_start", "running")
         conversation_id = state["conversation_id"]
         
         # 1. 获取被压缩的消息（如果有）
@@ -520,6 +621,7 @@ class RAGWorkflow:
             {"node": "archive", "ts": time.time(), "ok": True, "archived_count": len(all_to_archive)}
         )
         
+        self._emit_trace("archive", "node_end", "success")
         return {}
 
     def get_memory_stats(self, state: RAGState) -> Dict:
