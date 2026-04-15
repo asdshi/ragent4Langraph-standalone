@@ -583,11 +583,46 @@ def create_app() -> FastAPI:
                 if not request.conversation_id:
                     yield f"data: {json.dumps({'type': 'conversation_created', 'conversation_id': thread_id}, ensure_ascii=False)}\n\n"
                 
-                # 3. 真流式执行
-                async for event in workflow.run_stream(initial_state, thread_id=thread_id):
+                # 3. 真流式执行（带心跳保活）
+                stream = workflow.run_stream(initial_state, thread_id=thread_id)
+                event_queue = asyncio.Queue()
+                
+                async def _pump_stream():
+                    try:
+                        async for evt in stream:
+                            await event_queue.put(evt)
+                    finally:
+                        await event_queue.put(None)
+                
+                async def _heartbeat():
+                    while True:
+                        await asyncio.sleep(2)
+                        await event_queue.put({"type": "heartbeat"})
+                
+                pump_task = asyncio.create_task(_pump_stream())
+                hb_task = asyncio.create_task(_heartbeat())
+                
+                while True:
+                    try:
+                        event = await asyncio.wait_for(event_queue.get(), timeout=5)
+                    except asyncio.TimeoutError:
+                        if await req.is_disconnected():
+                            interrupted = True
+                            break
+                        continue
+                    
+                    if event is None:
+                        break
+                    
+                    if event.get("type") == "heartbeat":
+                        yield f"data: {json.dumps({'type': 'heartbeat'}, ensure_ascii=False)}\n\n"
+                        if await req.is_disconnected():
+                            interrupted = True
+                            break
+                        continue
+                    
                     if await req.is_disconnected():
                         interrupted = True
-                        print(f"[ChatStream] Client disconnected, thread={thread_id}")
                         break
                     
                     if event.get("type") == "trace":

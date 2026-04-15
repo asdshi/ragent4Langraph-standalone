@@ -105,8 +105,9 @@ const displaySteps = computed(() => {
       continue
     }
     
-    const running = nodeTraces.find(t => t.status === 'running')
+    const nodeEnd = nodeTraces.find(t => t.step === 'node_end')
     const error = nodeTraces.find(t => t.status === 'error')
+    const running = nodeTraces.find(t => t.status === 'running')
     const success = nodeTraces.filter(t => t.status === 'success')
     
     let status = 'pending'
@@ -116,17 +117,17 @@ const displaySteps = computed(() => {
     if (error) {
       status = 'error'
       payload = error.payload || {}
-    } else if (running) {
-      status = 'running'
-      payload = running.payload || {}
-    } else if (success.length > 0) {
+    } else if (nodeEnd && nodeEnd.status === 'success') {
       status = 'success'
-      payload = success[success.length - 1].payload || {}
+      payload = success.length > 0 ? success[success.length - 1].payload || {} : (nodeEnd.payload || {})
       const starts = nodeTraces.filter(t => t.status === 'running').map(t => t.ts)
       const ends = success.map(t => t.ts)
       if (starts.length && ends.length) {
         duration = Math.round((Math.max(...ends) - Math.min(...starts)) * 1000)
       }
+    } else if (running) {
+      status = 'running'
+      payload = running.payload || {}
     }
     
     result.push({

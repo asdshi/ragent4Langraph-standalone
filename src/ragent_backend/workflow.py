@@ -184,6 +184,8 @@ class RAGWorkflow:
                 )
                 
                 for t in pending:
+                    if t is graph_task:
+                        continue
                     t.cancel()
                     try:
                         await t
@@ -215,8 +217,7 @@ class RAGWorkflow:
         finally:
             self._token_queue = None
             self._trace_queue = None
-            # 外部中断时取消后台 LangGraph 任务，防止继续写脏 checkpoint
-            if not graph_task.done():
+            if graph_task and not graph_task.done():
                 graph_task.cancel()
                 try:
                     await graph_task
