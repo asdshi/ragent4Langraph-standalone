@@ -25,7 +25,11 @@ from src.core.settings import load_settings
 from src.core.trace.trace_context import TraceContext
 from src.ingestion.pipeline import IngestionPipeline, PipelineResult
 from src.ragent_backend.intent import analyze_query, detect_intent
+from src.ragent_backend.workflow import RAGWorkflow
+from src.ragent_backend.store import build_archive_store
 from src.mcp_server.tools.query_knowledge_hub import QueryKnowledgeHubTool
+from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+from src.observability.evaluation.rag_eval_runner import RAGEvalRunner
 
 
 @dataclass
@@ -345,6 +349,80 @@ class RAGBenchmark:
         ))
 
     # ------------------------------------------------------------------
+    # 4. 端到端 Ragas 评估（基于 golden_test_set_v2）
+    # ------------------------------------------------------------------
+    async def test_end_to_end_ragas(self):
+        """使用 RAGEvalRunner 对 golden_test_set_v2 进行端到端质量评估。"""
+        if not self.llm:
+            self.add_result(TestResult(
+                name="End-to-End Ragas Evaluation",
+                passed=False,
+                score=0.0,
+                details={},
+                error="LLM not available"
+            ))
+            return
+
+        test_set_path = Path("tests/fixtures/golden_test_set_v2.json")
+        if not test_set_path.exists():
+            self.add_result(TestResult(
+                name="End-to-End Ragas Evaluation",
+                passed=False,
+                score=0.0,
+                details={},
+                error=f"Test set not found: {test_set_path}"
+            ))
+            return
+
+        try:
+            archive_store = build_archive_store()
+            workflow = RAGWorkflow(
+                store=archive_store,
+                llm=self.llm,
+                checkpointer=None,
+                max_messages=20,
+                keep_recent=4,
+            )
+            ragas_evaluator = RagasEvaluator(settings=self.settings)
+
+            runner = RAGEvalRunner(
+                workflow=workflow,
+                ragas_evaluator=ragas_evaluator,
+            )
+
+            report = await runner.run(str(test_set_path), top_k=10)
+            metrics = report.aggregate_metrics
+
+            # 判定通过标准
+            faithfulness = metrics.get("faithfulness", 0.0)
+            answer_relevancy = metrics.get("answer_relevancy", 0.0)
+            context_precision = metrics.get("context_precision", 0.0)
+            passed = faithfulness >= 0.6 and answer_relevancy >= 0.6
+
+            self.add_result(TestResult(
+                name="End-to-End Ragas Evaluation",
+                passed=passed,
+                score=(faithfulness + answer_relevancy + context_precision) / 3,
+                details={
+                    "test_set": str(test_set_path),
+                    "query_count": len(report.query_results),
+                    "faithfulness": round(faithfulness, 4),
+                    "answer_relevancy": round(answer_relevancy, 4),
+                    "context_precision": round(context_precision, 4),
+                    "avg_latency_ms": round(report.total_elapsed_ms / max(len(report.query_results), 1), 2),
+                }
+            ))
+
+        except Exception as e:
+            self.add_result(TestResult(
+                name="End-to-End Ragas Evaluation",
+                passed=False,
+                score=0.0,
+                details={},
+                error=str(e)
+            ))
+
+    # ------------------------------------------------------------------
     # 汇总报告
     # ------------------------------------------------------------------
     def print_summary(self):
@@ -387,6 +465,9 @@ async def main():
 
     print("\nRunning RAG Retrieval tests...")
     await bench.test_retrieval_quality()
+
+    print("\nRunning End-to-End Ragas Evaluation...")
+    await bench.test_end_to_end_ragas()
 
     bench.print_summary()
 
