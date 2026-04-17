@@ -194,6 +194,7 @@ class EvalRunner:
         test_set_path: str | Path,
         top_k: int = 10,
         collection: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> EvalReport:
         """Run evaluation on the golden test set.
 
@@ -215,6 +216,8 @@ class EvalRunner:
         test_cases = load_test_set(test_set_path)
         if not test_cases:
             raise ValueError("Golden test set is empty.")
+        if limit is not None and limit > 0:
+            test_cases = test_cases[:limit]
 
         logger.info(
             "Starting evaluation: %d test cases, evaluator=%s",

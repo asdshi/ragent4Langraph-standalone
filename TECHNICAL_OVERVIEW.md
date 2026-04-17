@@ -521,6 +521,24 @@ Reranker 失败后也会 graceful fallback 到 RRF 融合结果。
   - Ingestion Pipeline + Trace
   - RAG Retrieval Quality
 
+### 10.4 检索策略消融实验
+
+基于 `default` collection（`simple.pdf`、`sample.txt`）与 73 条自动生成的 golden query，对四种检索策略进行了消融对比：
+
+| 策略 | Avg Latency (ms) | Result Coverage | Avg Results | 说明 |
+|:---|:---:|:---:|:---:|:---|
+| dense_only | 3554.7 | 1.00 | 3.00 | 仅启用 Dense 检索 (Chroma ANN) |
+| sparse_only | 3.1 | 0.90 | 1.20 | 仅启用 Sparse 检索 (BM25) |
+| hybrid | 3586.0 | 1.00 | 3.00 | Dense + Sparse + RRF 融合 |
+| hybrid_rerank | 3912.5 | 1.00 | 3.00 | Hybrid + Cross-Encoder Rerank (top-20 -> top-10) |
+
+**结论**：
+- **覆盖最全**：`dense_only` 与 `hybrid` / `hybrid_rerank` 均达到 Result Coverage = 1.00，说明向量语义检索在泛化查询上不可或缺。
+- **延迟最低**：`sparse_only` 平均仅 3.1 ms，但 coverage 降至 0.90；在关键词特征明显、对延迟极度敏感的场景可单独使用 BM25。
+- **综合推荐**：`hybrid` 兼顾语义泛化与关键词精确匹配；`hybrid_rerank` 在当前小数据集中增益有限，但随着文档量增加，Cross-Encoder 重排序对 top-k 质量的提升将更加显著。
+
+> 运行方式：`python scripts/run_ablation.py --collection default --test-set tests/fixtures/golden_test_set_v2.json`
+
 ---
 
 ## 11. 关键工程决策与已知限制

@@ -126,3 +126,7 @@ picture/
 .env.*.local
 secrets.yaml
 nonexistent_traces.jsonl/
+
+# Evaluation reports
+reports/
+benchmark_report_*.json

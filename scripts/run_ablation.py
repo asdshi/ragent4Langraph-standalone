@@ -36,7 +36,7 @@ from src.core.query_engine.query_processor import QueryProcessor
 from src.core.query_engine.dense_retriever import create_dense_retriever
 from src.core.query_engine.sparse_retriever import create_sparse_retriever
 from src.core.query_engine.fusion import RRFFusion
-from src.core.query_engine.reranker import create_core_reranker
+from src.core.query_engine.reranker import create_core_reranker, CoreReranker, RerankConfig
 from src.ingestion.storage.bm25_indexer import BM25Indexer
 from src.libs.embedding.embedding_factory import EmbeddingFactory
 from src.libs.vector_store.vector_store_factory import VectorStoreFactory
@@ -124,7 +124,7 @@ def build_hybrid_search(settings, strategy: str, collection: str):
     )
 
 
-async def run_strategy(settings, strategy: str, test_set_path: str, collection: str) -> StrategyResult:
+async def run_strategy(settings, strategy: str, test_set_path: str, collection: str, limit: int | None = None) -> StrategyResult:
     """运行单个策略的评估。"""
     print(f"\n{'='*60}")
     print(f"Running strategy: {strategy}")
@@ -133,7 +133,7 @@ async def run_strategy(settings, strategy: str, test_set_path: str, collection: 
     hybrid = build_hybrid_search(settings, strategy, collection)
 
     # evaluator: 只用 custom evaluator（hit_rate / MRR）因为 retrieval-only 没有 generated answer
-    custom_evaluator = CustomEvaluator(settings=settings)
+    custom_evaluator = CustomEvaluator(settings=settings, metrics=["hit_rate", "mrr"])
 
     # 如果有 reference_answer，也可用 ragas 的 context_precision（需要 answer）
     # 这里简单拼接 contexts 作为 answer placeholder
@@ -151,10 +151,10 @@ async def run_strategy(settings, strategy: str, test_set_path: str, collection: 
     # reranker（仅 hybrid_rerank 策略启用）
     reranker = None
     if strategy == "hybrid_rerank":
-        reranker = create_core_reranker(settings=settings)
-        # 强制开启
-        if hasattr(reranker, "is_enabled"):
-            reranker.is_enabled = True
+        reranker = CoreReranker(
+            settings=settings,
+            config=RerankConfig(enabled=True, top_k=10),
+        )
 
     runner = EvalRunner(
         settings=settings,
@@ -164,7 +164,7 @@ async def run_strategy(settings, strategy: str, test_set_path: str, collection: 
         reranker=reranker,
     )
 
-    report = runner.run(test_set_path, top_k=10, collection=collection)
+    report = runner.run(test_set_path, top_k=10, collection=collection, limit=limit)
 
     avg_latency = report.total_elapsed_ms / max(len(report.query_results), 1)
 
@@ -175,9 +175,19 @@ async def run_strategy(settings, strategy: str, test_set_path: str, collection: 
         "hybrid_rerank": "Hybrid + Cross-Encoder Rerank (top-20 -> top-10)",
     }.get(strategy, "")
 
+    # 计算额外的无 ground_truth 指标
+    query_count = len(report.query_results)
+    result_coverage = sum(1 for qr in report.query_results if qr.retrieved_chunk_ids) / max(query_count, 1)
+    avg_result_count = sum(len(qr.retrieved_chunk_ids) for qr in report.query_results) / max(query_count, 1)
+
+    # 把额外指标注入 report dict
+    report_dict = report.to_dict()
+    report_dict["aggregate_metrics"]["result_coverage"] = result_coverage
+    report_dict["aggregate_metrics"]["avg_result_count"] = avg_result_count
+
     return StrategyResult(
         strategy=strategy,
-        report=report.to_dict(),
+        report=report_dict,
         avg_latency_ms=avg_latency,
         config_notes=config_notes,
     )
@@ -206,6 +216,12 @@ async def main():
         default="reports",
         help="Output directory",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit evaluation to first N test cases",
+    )
     args = parser.parse_args()
 
     settings = load_settings()
@@ -214,7 +230,7 @@ async def main():
     results: List[StrategyResult] = []
     for strategy in args.strategies:
         try:
-            result = await run_strategy(settings, strategy, args.test_set, args.collection)
+            result = await run_strategy(settings, strategy, args.test_set, args.collection, limit=args.limit)
             results.append(result)
         except Exception as exc:
             print(f"[Error] Strategy {strategy} failed: {exc}")
@@ -270,14 +286,16 @@ async def main():
         metrics = r.report.get("aggregate_metrics", {})
         hit_rate = metrics.get("hit_rate", 0.0)
         mrr = metrics.get("mrr", 0.0)
+        coverage = metrics.get("result_coverage", 0.0)
+        avg_res = metrics.get("avg_result_count", 0.0)
         md_lines.append(
-            f"| {r.strategy} | {r.avg_latency_ms:.1f} | {hit_rate:.4f} | {mrr:.4f} | {r.config_notes} |"
+            f"| {r.strategy} | {r.avg_latency_ms:.1f} | {hit_rate:.4f} | {mrr:.4f} | {coverage:.2f} | {avg_res:.2f} | {r.config_notes} |"
         )
 
     md_lines.extend(["", "## 结论与建议", ""])
-    best_hit_rate = max(results, key=lambda r: r.report.get("aggregate_metrics", {}).get("hit_rate", 0.0))
+    best_coverage = max(results, key=lambda r: r.report.get("aggregate_metrics", {}).get("result_coverage", 0.0))
     best_latency = min(results, key=lambda r: r.avg_latency_ms)
-    md_lines.append(f"- **检索质量最优**: `{best_hit_rate.strategy}` (Hit Rate = {best_hit_rate.report.get('aggregate_metrics', {}).get('hit_rate', 0.0):.4f})")
+    md_lines.append(f"- **结果覆盖最优**: `{best_coverage.strategy}` (Result Coverage = {best_coverage.report.get('aggregate_metrics', {}).get('result_coverage', 0.0):.2f})")
     md_lines.append(f"- **延迟最低**: `{best_latency.strategy}` (Avg Latency = {best_latency.avg_latency_ms:.1f} ms)")
     md_lines.append("- 实际生产环境中，若对延迟敏感且文档关键词特征明显，可优先考虑 BM25-only；若语义泛化要求高，推荐 Hybrid 或 Hybrid+Rerank。")
 
@@ -291,7 +309,7 @@ async def main():
     print("=" * 60)
     for r in results:
         metrics = r.report.get("aggregate_metrics", {})
-        print(f"  {r.strategy:20s} | latency={r.avg_latency_ms:8.1f}ms | hit_rate={metrics.get('hit_rate', 0):.4f} | mrr={metrics.get('mrr', 0):.4f}")
+        print(f"  {r.strategy:20s} | latency={r.avg_latency_ms:8.1f}ms | hit_rate={metrics.get('hit_rate', 0):.4f} | mrr={metrics.get('mrr', 0):.4f} | coverage={metrics.get('result_coverage', 0):.2f} | avg_results={metrics.get('avg_result_count', 0):.2f}")
     print("=" * 60)
 
 
