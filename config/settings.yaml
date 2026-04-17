@@ -59,9 +59,9 @@ retrieval:
 # Rerank Configuration
 # =============================================================================
 rerank:
-  enabled: false
-  provider: "none"  # Options: none, cross_encoder, llm
-  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  enabled: true
+  provider: "dashscope"  # Options: none, cross_encoder, dashscope, llm
+  model: "qwen3-rerank"
   top_k: 5
 
 # =============================================================================

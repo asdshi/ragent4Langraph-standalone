@@ -27,6 +27,12 @@ def _lazy_import_cross_encoder_reranker():
     return CrossEncoderReranker
 
 
+def _lazy_import_dashscope_reranker():
+    """Lazy import to avoid circular dependencies."""
+    from src.libs.reranker.dashscope_reranker import DashScopeReranker
+    return DashScopeReranker
+
+
 class RerankerFactory:
     """Factory for creating Reranker provider instances.
     
@@ -84,6 +90,11 @@ class RerankerFactory:
         if "cross_encoder" not in cls._PROVIDERS:
             CrossEncoderReranker = _lazy_import_cross_encoder_reranker()
             cls.register_provider("cross_encoder", CrossEncoderReranker)
+        
+        # Lazy register DashScope reranker if not already registered
+        if "dashscope" not in cls._PROVIDERS:
+            DashScopeReranker = _lazy_import_dashscope_reranker()
+            cls.register_provider("dashscope", DashScopeReranker)
         
         try:
             rerank_settings = settings.rerank

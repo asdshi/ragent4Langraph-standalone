@@ -2,7 +2,7 @@
   "description": "Auto-generated golden test set for RAG-Pro evaluation",
   "version": "2.0",
   "generated_at": 285601.937,
-  "total_cases": 73,
+  "total_cases": 72,
   "test_cases": [
     {
       "query": "博主目前的开发语言是什么？",
@@ -826,17 +826,6 @@
       "tags": [
         "anaphora",
         "multi_turn"
-      ],
-      "history": []
-    },
-    {
-      "query": "",
-      "reference_answer": "空查询测试。",
-      "expected_chunk_ids": [],
-      "expected_sources": [],
-      "tags": [
-        "edge_case",
-        "empty_query"
       ],
       "history": []
     },

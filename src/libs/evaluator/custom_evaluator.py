@@ -46,6 +46,12 @@ class CustomEvaluator(BaseEvaluator):
 
         self.metrics = normalized
 
+    def validate_retrieved_chunks(self, retrieved_chunks: List[Any]) -> None:
+        """Override to allow empty retrieved_chunks (valid for no-match queries)."""
+        if not isinstance(retrieved_chunks, list):
+            raise ValueError("retrieved_chunks must be a list")
+        # Empty list is valid – metrics will naturally be 0.
+
     def evaluate(
         self,
         query: str,
