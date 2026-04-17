@@ -523,24 +523,24 @@ Reranker 失败后也会 graceful fallback 到 RRF 融合结果。
 
 ### 10.4 检索策略消融实验
 
-基于 `default` collection（`simple.pdf`、`sample.txt`）与 20 条有效 golden query 的消融对比（已过滤空 query）：
+基于 `default` collection（`simple.pdf`、`sample.txt`）与 **72 条有效 golden query** 的消融对比（已过滤空 query）：
 
 | 策略 | Avg Latency (ms) | Result Coverage | Avg Results | 说明 |
 |:---|:---:|:---:|:---:|:---|
-| dense_only | 3643.8 | 1.00 | 3.00 | 仅启用 Dense 检索 (Chroma ANN) |
-| sparse_only | 3.1 | 0.90 | 1.20 | 仅启用 Sparse 检索 (BM25) |
-| hybrid | 4082.0 | 1.00 | 3.00 | Dense + Sparse + RRF 融合 |
-| hybrid_rerank | 6953.9 | 1.00 | 3.00 | Hybrid + DashScope `qwen3-rerank` API 重排 (top-20 -> top-10) |
+| dense_only | 2831.8 | 1.00 | 3.00 | 仅启用 Dense 检索 (Chroma ANN) |
+| sparse_only | 1.9 | 0.78 | 1.11 | 仅启用 Sparse 检索 (BM25) |
+| hybrid | 2957.3 | 1.00 | 3.00 | Dense + Sparse + RRF 融合 |
+| hybrid_rerank | 6255.4 | 1.00 | 3.00 | Hybrid + DashScope `qwen3-rerank` API 重排 (top-20 -> top-10) |
 
 **结论**：
 - **覆盖最全**：`dense_only` 与 `hybrid` / `hybrid_rerank` 均达到 Result Coverage = 1.00，说明向量语义检索在泛化查询上不可或缺。
-- **延迟最低**：`sparse_only` 平均仅 3.1 ms，但 coverage 降至 0.90；在关键词特征明显、对延迟极度敏感的场景可单独使用 BM25。
-- **重排开销**：`hybrid_rerank` 比 `hybrid` 增加约 2.9 s 延迟，主要来自 DashScope `qwen3-rerank` API 的网络往返与云端推理；随着候选文档增多，重排对 top-k 质量的提升将更加显著。
+- **延迟最低**：`sparse_only` 平均仅 1.9 ms，但 coverage 仅 0.78；在关键词特征明显、对延迟极度敏感的场景可单独使用 BM25，但会漏掉 22% 的查询。
+- **重排开销**：`hybrid_rerank` 比 `hybrid` 增加约 **3.3 s** 延迟（6255.4 vs 2957.3 ms），主要来自 DashScope `qwen3-rerank` API 的网络往返与云端推理；随着候选文档增多，重排对 top-k 质量的提升将更加显著。
 - **综合推荐**：生产环境若对延迟敏感且预算有限，优先 `hybrid`；若追求极致检索质量且可接受 API 成本，启用 `qwen3-rerank` 精排。
 
-> 运行方式：`python scripts/run_ablation.py --collection default --test-set tests/fixtures/golden_test_set_v2.json --limit 20`
+> 运行方式：`python scripts/run_ablation.py --collection default --test-set tests/fixtures/golden_test_set_v2.json`
 
-> **注意**：原 73 条测试集中部分 query 对应文档未成功摄入（仅 `simple.pdf`、`sample.txt` 在 `default` collection 中），且缺少 `expected_chunk_ids` ground truth，因此 `hit_rate` 与 `mrr` 均为 0.0000。后续完整评估需重新生成带 chunk_id 标注的测试集。
+> **注意**：当前 `default` collection 仅含 `simple.pdf`、`sample.txt`（其余文档因 Embedding API 超时未成功摄入），且测试集缺少 `expected_chunk_ids` ground truth，因此 `hit_rate` 与 `mrr` 均为 0.0000。后续完整评估需：① 重新 ingest 所有参考文档；② 生成带 chunk-id 标注的测试集。
 
 ---
 
