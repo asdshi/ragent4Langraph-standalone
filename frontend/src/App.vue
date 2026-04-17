@@ -217,51 +217,66 @@
           </div>
           
           <div
-            v-for="(msg, index) in messages"
-            :key="index"
-            :class="['message', msg.role]"
+            v-for="(turn, tIndex) in messageTurns"
+            :key="tIndex"
+            class="turn-group"
           >
-            <div class="message-avatar">
-              <el-avatar 
-                :size="36" 
-                :class="msg.role"
+            <!-- 横向 checkpoint 分隔线（第一轮不显示） -->
+            <div v-if="tIndex > 0" class="turn-divider">
+              <div class="turn-divider-line" />
+              <el-tooltip
+                v-if="turn.user && turn.user.message_id"
+                content="回溯到此处"
+                placement="top"
               >
-                <el-icon v-if="msg.role === 'user'"><UserFilled /></el-icon>
-                <el-icon v-else><ChatDotRound /></el-icon>
-              </el-avatar>
+                <div
+                  :class="['turn-divider-dot', { 'turn-divider-dot--active': tIndex === messageTurns.length - 1 && !isTyping }]"
+                  @click="rollbackToMessage(turn.user.message_id)"
+                />
+              </el-tooltip>
+              <div v-else class="turn-divider-dot turn-divider-dot--plain" />
             </div>
-            
-            <div class="message-content-wrapper">
-              <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
-              <div class="message-time">
-                {{ formatTime(msg.time) }}
-                <el-button
-                  v-if="msg.role === 'assistant' && msg.message_id"
-                  link
-                  size="small"
-                  type="danger"
-                  class="rollback-btn"
-                  @click="rollbackToMessage(msg.message_id)"
-                >
-                  回溯到此处
-                </el-button>
-              </div>
-              
-              <!-- 检索来源（仅 AI 消息显示） -->
-              <div v-if="msg.sources && msg.sources.length > 0" class="message-sources">
-                <el-collapse>
-                  <el-collapse-item title="检索来源">
-                    <div
-                      v-for="(source, idx) in msg.sources"
-                      :key="idx"
-                      class="source-item"
-                    >
-                      <el-tag size="small">{{ source.doc_id }}</el-tag>
-                      <span class="source-score">得分: {{ (source.score * 100).toFixed(1) }}%</span>
-                      <p class="source-content">{{ source.content.substring(0, 100) }}...</p>
-                    </div>
-                  </el-collapse-item>
-                </el-collapse>
+
+            <!-- Messages in this turn -->
+            <div class="turn-messages">
+              <div
+                v-for="(msg, mIndex) in turn.messages"
+                :key="mIndex"
+                :class="['message', msg.role]"
+              >
+                <div class="message-avatar">
+                  <el-avatar 
+                    :size="36" 
+                    :class="msg.role"
+                  >
+                    <el-icon v-if="msg.role === 'user'"><UserFilled /></el-icon>
+                    <el-icon v-else><ChatDotRound /></el-icon>
+                  </el-avatar>
+                </div>
+                
+                <div class="message-content-wrapper">
+                  <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
+                  <div class="message-time">
+                    {{ formatTime(msg.time) }}
+                  </div>
+                  
+                  <!-- 检索来源（仅 AI 消息显示） -->
+                  <div v-if="msg.sources && msg.sources.length > 0" class="message-sources">
+                    <el-collapse>
+                      <el-collapse-item title="检索来源">
+                        <div
+                          v-for="(source, idx) in msg.sources"
+                          :key="idx"
+                          class="source-item"
+                        >
+                          <el-tag size="small">{{ source.doc_id }}</el-tag>
+                          <span class="source-score">得分: {{ (source.score * 100).toFixed(1) }}%</span>
+                          <p class="source-content">{{ source.content.substring(0, 100) }}...</p>
+                        </div>
+                      </el-collapse-item>
+                    </el-collapse>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -362,7 +377,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import TracePanel from './components/TracePanel.vue'
@@ -393,6 +408,29 @@ const showTracePanel = ref(true)
 const traceWs = ref(null)
 
 const apiBase = ref(settings.apiBase)
+
+// 按轮次（turn）分组消息，用于 checkpoint 时间线
+const messageTurns = computed(() => {
+  const turns = []
+  let currentTurn = null
+  
+  for (const msg of messages.value) {
+    if (msg.role === 'user') {
+      currentTurn = { user: msg, messages: [msg] }
+      turns.push(currentTurn)
+    } else if (currentTurn) {
+      currentTurn.messages.push(msg)
+      if (msg.role === 'assistant') {
+        currentTurn.assistant = msg
+      }
+    } else {
+      // 兜底：如果消息列表以 assistant 开头（异常数据），单独成组
+      turns.push({ user: null, assistant: msg, messages: [msg] })
+    }
+  }
+  
+  return turns
+})
 
 // 快捷操作
 const quickActions = [
@@ -1523,9 +1561,62 @@ body {
 
 .message.user .message-time { text-align: left; }
 
-.rollback-btn {
-  margin-left: 8px;
-  font-size: 11px;
+/* Turn Group & Checkpoint Divider */
+.turn-group {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+.turn-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 8px 0 24px;
+  position: relative;
+}
+
+.turn-divider-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed var(--border-hover);
+}
+
+.turn-divider-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--text-tertiary);
+  background: var(--bg-surface);
+  cursor: pointer;
+  z-index: 1;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.turn-divider-dot:hover {
+  transform: scale(1.4);
+  border-color: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.45);
+}
+
+.turn-divider-dot--active {
+  background: #10b981;
+  border-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
+}
+
+.turn-divider-dot--plain {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.turn-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
 }
 
 /* 检索来源 */

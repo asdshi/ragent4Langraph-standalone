@@ -44,12 +44,19 @@ class RAGBenchmark:
         self.test_collection = f"benchmark_{int(time.time())}"
 
         try:
-            self.llm = ChatOpenAI(
-                model=os.getenv("RAGENT_LLM_MODEL", "qwen3.5-omni-flash"),
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                api_key=os.environ.get("OPENAI_API_KEY"),
-                temperature=0.0,
-            )
+            llm_kwargs = {
+                "model": self.settings.llm.model,
+                "temperature": 0.0,
+            }
+            if getattr(self.settings.llm, "base_url", None):
+                llm_kwargs["base_url"] = self.settings.llm.base_url
+            if getattr(self.settings.llm, "api_key", None):
+                llm_kwargs["api_key"] = self.settings.llm.api_key
+            elif os.environ.get("OPENAI_API_KEY"):
+                llm_kwargs["api_key"] = os.environ.get("OPENAI_API_KEY")
+            if getattr(self.settings.llm, "max_tokens", None):
+                llm_kwargs["max_tokens"] = self.settings.llm.max_tokens
+            self.llm = ChatOpenAI(**llm_kwargs)
         except Exception as e:
             print(f"[Init] Failed to create LLM: {e}")
             self.llm = None

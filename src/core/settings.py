@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -312,6 +313,77 @@ class Settings:
         return settings
 
 
+def _apply_env_overrides(data: Dict[str, Any]) -> None:
+    """用环境变量覆盖 YAML 配置中的对应字段。
+
+    支持的环境变量：
+    - RAGENT_LLM_PROVIDER / MODEL / BASE_URL / API_KEY / TEMPERATURE / MAX_TOKENS
+    - RAGENT_EMBEDDING_PROVIDER / MODEL / BASE_URL / API_KEY / DIMENSIONS
+    - RAGENT_VISION_LLM_ENABLED / PROVIDER / MODEL / BASE_URL / API_KEY / MAX_IMAGE_SIZE
+    """
+
+    def _set(data_dict: Dict[str, Any], key: str, value: Any) -> None:
+        if key not in data_dict or data_dict[key] is None:
+            data_dict[key] = {}
+        if isinstance(data_dict[key], dict):
+            data_dict[key] = value
+        else:
+            data_dict[key] = value
+
+    # LLM overrides
+    if os.getenv("RAGENT_LLM_PROVIDER"):
+        _set(data, "llm", {**(data.get("llm") or {}), "provider": os.getenv("RAGENT_LLM_PROVIDER")})
+    if os.getenv("RAGENT_LLM_MODEL"):
+        _set(data, "llm", {**(data.get("llm") or {}), "model": os.getenv("RAGENT_LLM_MODEL")})
+    if os.getenv("RAGENT_LLM_BASE_URL"):
+        _set(data, "llm", {**(data.get("llm") or {}), "base_url": os.getenv("RAGENT_LLM_BASE_URL")})
+    if os.getenv("RAGENT_LLM_API_KEY"):
+        _set(data, "llm", {**(data.get("llm") or {}), "api_key": os.getenv("RAGENT_LLM_API_KEY")})
+    if os.getenv("RAGENT_LLM_TEMPERATURE"):
+        try:
+            _set(data, "llm", {**(data.get("llm") or {}), "temperature": float(os.getenv("RAGENT_LLM_TEMPERATURE"))})
+        except ValueError:
+            pass
+    if os.getenv("RAGENT_LLM_MAX_TOKENS"):
+        try:
+            _set(data, "llm", {**(data.get("llm") or {}), "max_tokens": int(os.getenv("RAGENT_LLM_MAX_TOKENS"))})
+        except ValueError:
+            pass
+
+    # Embedding overrides
+    if os.getenv("RAGENT_EMBEDDING_PROVIDER"):
+        _set(data, "embedding", {**(data.get("embedding") or {}), "provider": os.getenv("RAGENT_EMBEDDING_PROVIDER")})
+    if os.getenv("RAGENT_EMBEDDING_MODEL"):
+        _set(data, "embedding", {**(data.get("embedding") or {}), "model": os.getenv("RAGENT_EMBEDDING_MODEL")})
+    if os.getenv("RAGENT_EMBEDDING_BASE_URL"):
+        _set(data, "embedding", {**(data.get("embedding") or {}), "base_url": os.getenv("RAGENT_EMBEDDING_BASE_URL")})
+    if os.getenv("RAGENT_EMBEDDING_API_KEY"):
+        _set(data, "embedding", {**(data.get("embedding") or {}), "api_key": os.getenv("RAGENT_EMBEDDING_API_KEY")})
+    if os.getenv("RAGENT_EMBEDDING_DIMENSIONS"):
+        try:
+            _set(data, "embedding", {**(data.get("embedding") or {}), "dimensions": int(os.getenv("RAGENT_EMBEDDING_DIMENSIONS"))})
+        except ValueError:
+            pass
+
+    # Vision LLM overrides
+    if os.getenv("RAGENT_VISION_LLM_ENABLED"):
+        val = os.getenv("RAGENT_VISION_LLM_ENABLED", "").lower() in ("true", "1", "yes", "on")
+        _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "enabled": val})
+    if os.getenv("RAGENT_VISION_LLM_PROVIDER"):
+        _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "provider": os.getenv("RAGENT_VISION_LLM_PROVIDER")})
+    if os.getenv("RAGENT_VISION_LLM_MODEL"):
+        _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "model": os.getenv("RAGENT_VISION_LLM_MODEL")})
+    if os.getenv("RAGENT_VISION_LLM_BASE_URL"):
+        _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "base_url": os.getenv("RAGENT_VISION_LLM_BASE_URL")})
+    if os.getenv("RAGENT_VISION_LLM_API_KEY"):
+        _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "api_key": os.getenv("RAGENT_VISION_LLM_API_KEY")})
+    if os.getenv("RAGENT_VISION_LLM_MAX_IMAGE_SIZE"):
+        try:
+            _set(data, "vision_llm", {**(data.get("vision_llm") or {}), "max_image_size": int(os.getenv("RAGENT_VISION_LLM_MAX_IMAGE_SIZE"))})
+        except ValueError:
+            pass
+
+
 def validate_settings(settings: Settings) -> None:
     """执行语义层校验。
 
@@ -350,8 +422,10 @@ def load_settings(path: str | Path | None = None) -> Settings:
 
     # 使用 safe_load 避免执行任意 YAML 标签构造逻辑。
     with settings_path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
+        data = yaml.safe_load(handle) or {}
 
-    settings = Settings.from_dict(data or {})
+    _apply_env_overrides(data)
+
+    settings = Settings.from_dict(data)
     validate_settings(settings)
     return settings

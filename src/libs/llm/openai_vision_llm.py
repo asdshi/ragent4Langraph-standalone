@@ -357,25 +357,46 @@ class OpenAIVisionLLM(BaseVisionLLM):
             "max_tokens": max_tokens,
         }
         
-        try:
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(url, json=payload, headers=headers)
-                
-                if response.status_code != 200:
-                    error_detail = self._parse_error_response(response)
-                    raise OpenAIVisionLLMError(
-                        f"[OpenAI Vision] API error (HTTP {response.status_code}): {error_detail}"
-                    )
-                
-                return response.json()
-        except httpx.TimeoutException as e:
+        last_error = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                    
+                    if response.status_code != 200:
+                        error_detail = self._parse_error_response(response)
+                        raise OpenAIVisionLLMError(
+                            f"[OpenAI Vision] API error (HTTP {response.status_code}): {error_detail}"
+                        )
+                    
+                    return response.json()
+            except (httpx.TimeoutException, httpx.RequestError) as e:
+                last_error = e
+                if attempt < 2:
+                    import time
+                    time.sleep(1.0 * (2 ** attempt))
+                continue
+            except OpenAIVisionLLMError:
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    import time
+                    time.sleep(1.0 * (2 ** attempt))
+                continue
+        
+        if isinstance(last_error, httpx.TimeoutException):
             raise OpenAIVisionLLMError(
-                "[OpenAI Vision] Request timed out after 60 seconds"
-            ) from e
-        except httpx.RequestError as e:
+                "[OpenAI Vision] Request timed out after 60 seconds (3 retries)"
+            ) from last_error
+        elif isinstance(last_error, httpx.RequestError):
             raise OpenAIVisionLLMError(
-                f"[OpenAI Vision] Connection failed: {type(e).__name__}: {e}"
-            ) from e
+                f"[OpenAI Vision] Connection failed after 3 retries: {type(last_error).__name__}: {last_error}"
+            ) from last_error
+        else:
+            raise OpenAIVisionLLMError(
+                f"[OpenAI Vision] API call failed after 3 retries: {type(last_error).__name__}: {last_error}"
+            ) from last_error
     
     def _parse_error_response(self, response: Any) -> str:
         """Parse error details from API response."""

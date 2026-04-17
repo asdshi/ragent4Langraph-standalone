@@ -39,7 +39,7 @@ from src.ragent_backend.workflow import RAGWorkflow
 from src.ragent_backend.file_store import build_file_store, ConversationFileStore
 from src.ragent_backend.conversation_store import build_conversation_store, ConversationStore
 from src.ingestion.pipeline import IngestionPipeline
-from src.core.settings import load_settings, Settings
+from src.core.settings import load_settings
 
 
 def create_checkpointer():
@@ -276,13 +276,19 @@ def create_app() -> FastAPI:
     file_store: ConversationFileStore = build_file_store()
     conversation_store: ConversationStore = build_conversation_store()
     
-    # 初始化 LLM
+    # 初始化 LLM（配置完全来自 settings.yaml + 环境变量覆盖）
     try:
         from langchain_openai import ChatOpenAI
-        llm = ChatOpenAI(
-            model=os.getenv("RAGENT_LLM_MODEL", "gpt-4o"),
-            temperature=0.7,
-        )
+        llm_kwargs = {
+            "model": settings.llm.model,
+            "temperature": settings.llm.temperature,
+            "max_tokens": settings.llm.max_tokens,
+        }
+        if getattr(settings.llm, "base_url", None):
+            llm_kwargs["base_url"] = settings.llm.base_url
+        if getattr(settings.llm, "api_key", None):
+            llm_kwargs["api_key"] = settings.llm.api_key
+        llm = ChatOpenAI(**llm_kwargs)
     except Exception as e:
         print(f"[Init] Failed to init LLM: {e}")
         llm = None

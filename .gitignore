@@ -97,6 +97,27 @@ logs/
 *.log
 traces.jsonl
 
+# Database / SQLite
+checkpoints.sqlite*
+*.db
+*.db-journal
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# Node modules
+frontend/node_modules/
+frontend/package-lock.json
+
+# MCP sync artifacts
+.mcp_dirty_snap/
+.mcp_sync_export/
+
+# Temporary test scripts and files
+tmp_test_*.py
+.tmp_sync_manifest.tsv
+picture/
+
 # Auto-coder skill cache
 .github/skills/auto-coder/.spec_hash
 

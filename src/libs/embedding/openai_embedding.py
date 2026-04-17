@@ -155,13 +155,22 @@ class OpenAIEmbedding(BaseEmbedding):
         if dimensions is not None and self.model.startswith("text-embedding-3"):
             api_params["dimensions"] = dimensions
         
-        # Call OpenAI API
-        try:
-            response = client.embeddings.create(**api_params)
-        except Exception as e:
+        # Call OpenAI API with retry
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = client.embeddings.create(**api_params)
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    import time
+                    time.sleep(1.0 * (2 ** attempt))
+                continue
+        else:
             raise OpenAIEmbeddingError(
-                f"OpenAI Embeddings API call failed: {e}"
-            ) from e
+                f"OpenAI Embeddings API call failed after 3 retries: {last_error}"
+            ) from last_error
         
         # Extract embeddings from response
         # Response format: response.data is a list of objects with .embedding attribute
