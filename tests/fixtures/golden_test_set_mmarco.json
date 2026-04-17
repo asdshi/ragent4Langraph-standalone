@@ -1,0 +1,1212 @@
+{
+  "description": "mMARCO Chinese dev subset (100 queries) for RAG ablation",
+  "version": "1.0",
+  "source": "unicamp-dl/mmarco",
+  "total_cases": 100,
+  "test_cases": [
+    {
+      "query": "谁负责萨宾山口之战",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7950747"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "你如何在 iTunes 中移动歌曲",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7308155"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "100 毫升可乐中的咖啡因",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7988639"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "硫胺素补充剂的副作用",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7082447"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么 bhp 是 etype",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7507021"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "青铜作为动词的意思",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7608641"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "南卡罗来纳州县的人口",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7463257"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "8级地震多少焦耳",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7349302"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "美国银行营业时间",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7087971"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "肝病专家是什么",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7566983"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "wnba球员工资",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "3093663"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "时间物流",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7083406"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "我什么时候可以确定我宝宝的性别",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "3122253"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "无糖口香糖会引起腹泻吗",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "8005973"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "当你住在靠近水体时的温度是多少",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7216048"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是truvia",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7880811"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "鼬能打败斑吗",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7316322"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "皮肤科医生可以开处方吗？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7860668"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "世界上加速最快的飞机",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7297764"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "旧海军客户编号",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7658413"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "与使用美金刚相关的副作用",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7531280"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "密歇根州雷德福在哪里",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7887307"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "正确性是什么意思",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7207090"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "波兰香肠的卡路里链接",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7775620"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "堪萨斯州的哪个镇是 Boot Hill 的所在地",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7238811"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "甲状腺疾病是一种自身免疫性疾病吗",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7415211"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "自助餐厅计划可以包含哪些福利",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7109846"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "谁写了最早的希腊文学作品",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7866672"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "我的世界喇嘛吃什么",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7125266",
+        "7125270"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "加拿大什么时候成为一个国家的",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7252185"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "坎昆的天气如何",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7768203"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "付费使用 ba 休息室盖特威克",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7414083"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "我的头发是什么类型的孔隙",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7763936"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是上纳度",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7217007"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "是什么导致男人失去控制和小便",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7408281"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "你为每个遗传性状遗传了多少等位基因？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7401799"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "ang 法语定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7297862"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "安慰剂效应是真实的",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7902986"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "lg k7有多少GB",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7439911"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "艾迪生·里克几岁",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7383399"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "急性鼻窦炎的病因",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7128896"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是上限",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7917896"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是拱腹？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "6146787"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "是什么导致并结束了美西战争？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "2489666"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "注册一架无人机需要多少钱",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "1345067"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "移动骨骼的肌肉称为",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7428552"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "氡气中毒的家庭数量",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7860856"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是起搏器",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7530170",
+        "7530174"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "献血身高体重要求",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7942653"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "异国情调的舞者定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7981147"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "女性一天的正常饮酒量是多少",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7748346"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "福布斯人力资源管理定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "3576091"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是csn网络",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7664474"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "为什么我吃完饭会胃痉挛",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7622434"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "办公室或工作空间可接受的湿度是多少",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7689607"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "谁是纽约的奎因",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7900545"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是两个单体的组",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7588123"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "购买无车牌车辆后可以走多少天",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7426624"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "冠军食品定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7849522"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "俄罗斯普斯科夫的天气",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7094689"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "内罗毕的温度是多少",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7975790"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "电影鳄鱼邓迪在哪里拍摄的？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "2773487"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "金星自转需要多长时间",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7339633"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "我的网络安全密钥是什么",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7750895"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "垄断企业做广告",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7388532"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么会导致我的牙齿松动",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7246609"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "罗谢尔是哪个县",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7511354"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "黄金意义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "1027110"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是海洋组织",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7186143"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "加入aarp的年龄是多少",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7194681"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是双重清洁",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7694387"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "谁创造了跟随金钱这个词",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7769264"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "氮气是理想气体吗",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "1668944"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "本宁顿战役在哪一天结束",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7121617"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "761504"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "商业漫游定义",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "2462113"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是 taku",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7161987"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "修补硬木地板 dc",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7466389",
+        "7466396"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "玛丽对冲 md npi 编号",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7770447"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "佛罗伦萨在哪个县",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7529555"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "两个住在同一所房子里的未婚人士必须互相买汽车保险吗",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7326220"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "每日小剂量阿司匹林的副作用",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7457404"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "savannah ga 有没有被飓风袭击过",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7340431"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是公证",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7809196"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么导致动脉阻塞",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "6054068"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "卡尔·马克思的原著是基于什么",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7805969"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是约翰尼石",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7181072"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "欧元周期堡垒价值",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7127625"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是发酵",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "1943020"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "多佛的悬崖有多高",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7999799"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是免疫印迹",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7620802"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是好的",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7488592"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "约的意思",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7643915"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是海军陆战队的野战级军官",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7155557"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是念珠",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7417764"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "蔗糖等双糖和淀粉等多糖有什么共同点？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7124676"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "trolls 这个词在俚语中是什么意思？",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "6786974"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "什么是网页设计中的组合",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7171887"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "我有没有遇见我爱上你的歌词",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7324477"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    },
+    {
+      "query": "漂白剂和醋对植物有什么影响",
+      "reference_answer": "",
+      "expected_chunk_ids": [
+        "7201743",
+        "7201744"
+      ],
+      "expected_sources": [],
+      "tags": [
+        "factual"
+      ],
+      "history": []
+    }
+  ]
+}

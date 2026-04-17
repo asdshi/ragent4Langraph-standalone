@@ -523,25 +523,31 @@ Reranker 失败后也会 graceful fallback 到 RRF 融合结果。
 
 ### 10.4 检索策略消融实验
 
-基于 `default` collection（7 个文档，64 chunks）与 **72 条有效 golden query** 的消融对比：
+基于 [**mMARCO Chinese**](https://huggingface.co/datasets/unicamp-dl/mmarco)（真实 Bing 搜索日志人工标注数据集）的消融对比：
 
 | 策略 | Avg Latency (ms) | Hit Rate | MRR | Coverage | Avg Results | 说明 |
 |:---|:---:|:---:|:---:|:---:|:---:|:---|
-| dense_only | 3923.0 | 1.0000 | 0.9630 | 1.00 | 10.00 | 仅 Dense 检索 (Chroma ANN) |
-| sparse_only | **27.1** | 0.9861 | 0.9792 | 0.99 | 9.65 | 仅 Sparse 检索 (BM25) |
-| hybrid | 3839.8 | **1.0000** | **1.0000** | 1.00 | 10.00 | Dense + Sparse + RRF 融合 |
-| hybrid_rerank | 7720.9 | 1.0000 | 0.9218 | 1.00 | 10.00 | Hybrid + DashScope `qwen3-rerank` 精排 |
+| dense_only | 4597.7 | **0.9800** | 0.9537 | 1.00 | 10.00 | 纯 Dense 检索 (Chroma ANN) |
+| sparse_only | **56.1** | 0.8300 | 0.7683 | 0.95 | 6.29 | 纯 Sparse 检索 (BM25) |
+| hybrid | 4929.8 | 0.9700 | 0.8908 | 1.00 | 10.00 | Dense + Sparse + RRF 融合 |
+| hybrid_rerank | 11123.8 | 0.9700 | **0.9570** | 1.00 | 10.00 | Hybrid + DashScope `qwen3-rerank` 精排 |
+
+**实验设置**：
+- 数据集：mMARCO Chinese dev 子集（100 queries，604 passages，人工标注相关 docid）
+- 评估指标：Hit Rate（top-10 是否命中任意 positive）、MRR（positive 的 reciprocal rank）
+- Ground truth：mMARCO 官方 qrels（非自生成，避免 circular evaluation）
 
 **结论**：
-- **质量最优**：`hybrid` 达到完美 MRR = 1.0000，Dense + Sparse 融合能有效互补，在所有查询上都将最相关 chunk 排在首位。
-- **延迟最低**：`sparse_only` 仅 **27.1 ms**（比 hybrid 快 142 倍），且 hit_rate=0.9861、MRR=0.9792，在该数据集上质量几乎媲美 hybrid。关键词特征明显的文档集可优先 BM25。
-- **重排陷阱**：`hybrid_rerank` 的 MRR 反而降至 **0.9218**——DashScope `qwen3-rerank` API 在此数据集上打乱了原本由 RRF 排好的顺序。说明云端 Cross-Encoder 并非在所有场景下都优于本地融合策略，需结合实际数据验证。
+- **Dense 检索质量最高**：`dense_only` hit_rate=0.9800、MRR=0.9537，纯向量语义检索在短 passage 场景下表现优异。
+- **BM25 速度碾压但质量下降**：`sparse_only` 仅 **56.1 ms**（比 dense 快 **82 倍**），但 hit_rate 降至 0.83、MRR 降至 0.7683——适合关键词明确、对延迟极度敏感的场景。
+- **RRF 融合在此场景下反而稀释排名**：`hybrid` 的 MRR（0.8908）低于 `dense_only`（0.9537），说明稀疏分支召回了与 query 相关度较低的 passage，拉低了最相关 passage 的排名。
+- **Rerank 拉回质量**：`hybrid_rerank` MRR 回升至 **0.9570**（接近 dense_only），说明 DashScope `qwen3-rerank` API 能有效纠正 RRF 融合带来的排名稀释。代价是延迟增加约 **6.2 秒**。
 - **综合推荐**：
-  - 延迟敏感 → `sparse_only`（如果关键词覆盖够全）
-  - 质量优先 → `hybrid`（当前数据集上的最优解）
-  - `hybrid_rerank` 建议在大规模、长文档、语义歧义多的场景下再启用，小数据集慎用。
+  - 延迟敏感 + 关键词明确 → `sparse_only`
+  - 质量优先 + 短 passage → `dense_only`
+  - 兼顾两者 + 可接受 API 成本 → `hybrid_rerank`
 
-> 运行方式：`python scripts/run_ablation.py --collection default --test-set tests/fixtures/golden_test_set_v2.json`
+> 运行方式：`python scripts/run_ablation.py --collection mmarco --test-set tests/fixtures/golden_test_set_mmarco.json`
 
 ---
 
