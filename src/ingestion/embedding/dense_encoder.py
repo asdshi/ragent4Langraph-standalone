@@ -132,11 +132,39 @@ class DenseEncoder:
                 
                 all_vectors.extend(batch_vectors)
                 
-            except Exception as e:
-                # Re-raise with context about which batch failed
-                raise RuntimeError(
-                    f"Failed to encode batch {batch_start}-{batch_end}: {str(e)}"
-                ) from e
+            except Exception as batch_err:
+                # Fallback: encode one-by-one with retry for transient API failures
+                import time
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Batch embedding failed for batch {batch_start}-{batch_end} ({len(batch_texts)} chunks). "
+                    f"Falling back to single-chunk encoding. Error: {batch_err}"
+                )
+                
+                for idx, text in enumerate(batch_texts):
+                    chunk_idx = batch_start + idx
+                    for attempt in range(3):
+                        try:
+                            single_vector = self.embedding.embed(texts=[text], trace=trace)
+                            if len(single_vector) != 1:
+                                raise RuntimeError(
+                                    f"Expected 1 vector for single text, got {len(single_vector)}"
+                                )
+                            all_vectors.append(single_vector[0])
+                            break
+                        except Exception as single_err:
+                            if attempt < 2:
+                                wait = 2 ** attempt
+                                logger.warning(
+                                    f"Single-chunk embedding failed for chunk {chunk_idx} "
+                                    f"(attempt {attempt + 1}/3). Retrying in {wait}s... Error: {single_err}"
+                                )
+                                time.sleep(wait)
+                            else:
+                                raise RuntimeError(
+                                    f"Failed to encode chunk {chunk_idx} after 3 attempts: {single_err}"
+                                ) from single_err
         
         # Final validation
         if len(all_vectors) != len(chunks):

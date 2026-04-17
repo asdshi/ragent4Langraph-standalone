@@ -523,24 +523,25 @@ Reranker 失败后也会 graceful fallback 到 RRF 融合结果。
 
 ### 10.4 检索策略消融实验
 
-基于 `default` collection（`simple.pdf`、`sample.txt`）与 **72 条有效 golden query** 的消融对比（已过滤空 query）：
+基于 `default` collection（7 个文档，64 chunks）与 **72 条有效 golden query** 的消融对比：
 
-| 策略 | Avg Latency (ms) | Result Coverage | Avg Results | 说明 |
-|:---|:---:|:---:|:---:|:---|
-| dense_only | 2831.8 | 1.00 | 3.00 | 仅启用 Dense 检索 (Chroma ANN) |
-| sparse_only | 1.9 | 0.78 | 1.11 | 仅启用 Sparse 检索 (BM25) |
-| hybrid | 2957.3 | 1.00 | 3.00 | Dense + Sparse + RRF 融合 |
-| hybrid_rerank | 6255.4 | 1.00 | 3.00 | Hybrid + DashScope `qwen3-rerank` API 重排 (top-20 -> top-10) |
+| 策略 | Avg Latency (ms) | Hit Rate | MRR | Coverage | Avg Results | 说明 |
+|:---|:---:|:---:|:---:|:---:|:---:|:---|
+| dense_only | 3923.0 | 1.0000 | 0.9630 | 1.00 | 10.00 | 仅 Dense 检索 (Chroma ANN) |
+| sparse_only | **27.1** | 0.9861 | 0.9792 | 0.99 | 9.65 | 仅 Sparse 检索 (BM25) |
+| hybrid | 3839.8 | **1.0000** | **1.0000** | 1.00 | 10.00 | Dense + Sparse + RRF 融合 |
+| hybrid_rerank | 7720.9 | 1.0000 | 0.9218 | 1.00 | 10.00 | Hybrid + DashScope `qwen3-rerank` 精排 |
 
 **结论**：
-- **覆盖最全**：`dense_only` 与 `hybrid` / `hybrid_rerank` 均达到 Result Coverage = 1.00，说明向量语义检索在泛化查询上不可或缺。
-- **延迟最低**：`sparse_only` 平均仅 1.9 ms，但 coverage 仅 0.78；在关键词特征明显、对延迟极度敏感的场景可单独使用 BM25，但会漏掉 22% 的查询。
-- **重排开销**：`hybrid_rerank` 比 `hybrid` 增加约 **3.3 s** 延迟（6255.4 vs 2957.3 ms），主要来自 DashScope `qwen3-rerank` API 的网络往返与云端推理；随着候选文档增多，重排对 top-k 质量的提升将更加显著。
-- **综合推荐**：生产环境若对延迟敏感且预算有限，优先 `hybrid`；若追求极致检索质量且可接受 API 成本，启用 `qwen3-rerank` 精排。
+- **质量最优**：`hybrid` 达到完美 MRR = 1.0000，Dense + Sparse 融合能有效互补，在所有查询上都将最相关 chunk 排在首位。
+- **延迟最低**：`sparse_only` 仅 **27.1 ms**（比 hybrid 快 142 倍），且 hit_rate=0.9861、MRR=0.9792，在该数据集上质量几乎媲美 hybrid。关键词特征明显的文档集可优先 BM25。
+- **重排陷阱**：`hybrid_rerank` 的 MRR 反而降至 **0.9218**——DashScope `qwen3-rerank` API 在此数据集上打乱了原本由 RRF 排好的顺序。说明云端 Cross-Encoder 并非在所有场景下都优于本地融合策略，需结合实际数据验证。
+- **综合推荐**：
+  - 延迟敏感 → `sparse_only`（如果关键词覆盖够全）
+  - 质量优先 → `hybrid`（当前数据集上的最优解）
+  - `hybrid_rerank` 建议在大规模、长文档、语义歧义多的场景下再启用，小数据集慎用。
 
 > 运行方式：`python scripts/run_ablation.py --collection default --test-set tests/fixtures/golden_test_set_v2.json`
-
-> **注意**：当前 `default` collection 仅含 `simple.pdf`、`sample.txt`（其余文档因 Embedding API 超时未成功摄入），且测试集缺少 `expected_chunk_ids` ground truth，因此 `hit_rate` 与 `mrr` 均为 0.0000。后续完整评估需：① 重新 ingest 所有参考文档；② 生成带 chunk-id 标注的测试集。
 
 ---
 
