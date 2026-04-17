@@ -25,6 +25,10 @@ class ChatResponse(BaseModel):
     model_id: str
 
 
+class RollbackRequest(BaseModel):
+    target_message_id: str = Field(..., description="回溯边界消息 ID，删除该消息所在 turn 及之后的所有记录")
+
+
 class IntentResult(BaseModel):
     rewritten_query: str
     confidence: float
@@ -102,6 +106,9 @@ class RAGState(TypedDict, total=False):
     
     # === 追踪 ===
     trace_events: List[Dict[str, Any]]
+    
+    # === 本轮标识（用于三层时间裁剪回滚）===
+    current_turn_id: str
     
     # === 内部临时状态（不会存入 checkpoint）===
     _to_archive: List[Dict[str, Any]]  # 本轮要归档的消息

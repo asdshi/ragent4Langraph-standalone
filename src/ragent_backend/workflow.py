@@ -251,6 +251,8 @@ class RAGWorkflow:
         state.setdefault("messages", [])
         state.setdefault("summary", "")
         state.setdefault("memories", [])
+        # 每轮都生成新的 turn_id，用于后续三层时间裁剪回滚
+        state["current_turn_id"] = str(uuid.uuid4())
         
         # 召回长期记忆（跨会话认知连续）
         if self._ltm_store and state.get("user_id"):
@@ -585,10 +587,12 @@ class RAGWorkflow:
         # 3. 合并：压缩的消息 + 本轮消息
         all_to_archive = archived + current_turn_msgs
         
+        turn_id = state.get("current_turn_id")
+        
         # 4. 异步保存（添加异常处理回调）
         if all_to_archive:
             task = asyncio.create_task(
-                self._store.append_to_history(conversation_id, all_to_archive)
+                self._store.append_to_history(conversation_id, all_to_archive, turn_id=turn_id)
             )
             
             # 添加完成回调，处理异常
@@ -611,7 +615,7 @@ class RAGWorkflow:
                     try:
                         facts = await self._ltm_store.extract_facts(query, answer, self._llm)
                         if facts:
-                            self._ltm_store.save_facts(user_id, facts)
+                            self._ltm_store.save_facts(user_id, facts, conversation_id=conversation_id, turn_id=turn_id)
                             print(f"[Archive] Extracted {len(facts)} LTM facts for user {user_id}")
                     except Exception as e:
                         print(f"[Archive] LTM extraction failed: {e}")

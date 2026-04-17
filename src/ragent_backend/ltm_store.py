@@ -38,13 +38,15 @@ class LTMStore:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """确保长期记忆表存在"""
+        """确保长期记忆表存在（含增量列迁移）"""
         with sqlite3.connect(str(self._db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS long_term_memories (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
+                    conversation_id TEXT,
+                    turn_id TEXT,
                     fact TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     access_count INTEGER DEFAULT 0
@@ -57,6 +59,19 @@ class LTMStore:
                 ON long_term_memories(user_id)
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ltm_conv_turn
+                ON long_term_memories(conversation_id, turn_id)
+                """
+            )
+            # 增量迁移已有表
+            cursor = conn.execute("PRAGMA table_info(long_term_memories)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            if 'conversation_id' not in existing_cols:
+                conn.execute("ALTER TABLE long_term_memories ADD COLUMN conversation_id TEXT")
+            if 'turn_id' not in existing_cols:
+                conn.execute("ALTER TABLE long_term_memories ADD COLUMN turn_id TEXT")
             conn.commit()
 
     def _conn(self) -> sqlite3.Connection:
@@ -72,6 +87,8 @@ class LTMStore:
         self,
         user_id: str,
         facts: List[str],
+        conversation_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> None:
         """批量保存记忆事实（自动去重）"""
         if not facts:
@@ -93,10 +110,10 @@ class LTMStore:
             for fact in to_insert:
                 conn.execute(
                     """
-                    INSERT INTO long_term_memories (id, user_id, fact, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO long_term_memories (id, user_id, conversation_id, turn_id, fact, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (str(uuid.uuid4()), user_id, fact.strip(), now),
+                    (str(uuid.uuid4()), user_id, conversation_id, turn_id, fact.strip(), now),
                 )
             conn.commit()
 
@@ -211,6 +228,23 @@ class LTMStore:
         except Exception:
             pass
         return []
+
+    def delete_facts_from_turn(
+        self,
+        conversation_id: str,
+        turn_id: str,
+    ) -> int:
+        """删除指定 turn 产生的长期记忆事实，返回删除行数"""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM long_term_memories
+                WHERE conversation_id = ? AND turn_id = ?
+                """,
+                (conversation_id, turn_id),
+            )
+            conn.commit()
+            return cursor.rowcount
 
     # ------------------------------------------------------------------
     # 内部辅助

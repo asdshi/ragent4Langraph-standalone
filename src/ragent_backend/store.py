@@ -60,7 +60,8 @@ class ConversationArchiveStore:
     async def append_to_history(
         self, 
         conversation_id: str, 
-        messages: List[Dict[str, Any]]
+        messages: List[Dict[str, Any]],
+        turn_id: Optional[str] = None,
     ) -> None:
         """
         批量追加消息到历史记录（异步调用）
@@ -85,15 +86,16 @@ class ConversationArchiveStore:
                             msg["role"],
                             msg["content"],
                             msg.get("message_id", ""),
-                            msg.get("ts", time.time())
+                            msg.get("ts", time.time()),
+                            turn_id,
                         )
                         for msg in messages
                     ]
                     
                     await cursor.executemany(
                         """INSERT INTO conversation_archive 
-                           (conversation_id, role, content, message_id, created_at) 
-                           VALUES (%s, %s, %s, %s, %s)""",
+                           (conversation_id, role, content, message_id, created_at, turn_id) 
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
                         values
                     )
         except Exception as e:
@@ -112,7 +114,7 @@ class ConversationArchiveStore:
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
-                    """SELECT role, content, message_id, created_at
+                    """SELECT role, content, message_id, created_at, turn_id
                        FROM conversation_archive 
                        WHERE conversation_id = %s 
                        ORDER BY created_at ASC, id ASC""",
@@ -125,10 +127,72 @@ class ConversationArchiveStore:
                 "role": row[0],
                 "content": row[1],
                 "message_id": row[2],
-                "timestamp": row[3]
+                "timestamp": row[3],
+                "turn_id": row[4],
             }
             for row in rows
         ]
+
+    async def delete_messages_from_turn(self, conversation_id: str, turn_id: str) -> int:
+        """
+        删除指定 turn 及之后的所有消息（按 created_at 兜底）
+        返回删除的行数
+        """
+        pool = await self._get_mysql_pool()
+        if pool is None:
+            return 0
+        
+        await self._ensure_schema()
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # 先获取该 turn 下最早一条消息的时间戳
+                await cursor.execute(
+                    """SELECT MIN(created_at) FROM conversation_archive
+                       WHERE conversation_id = %s AND turn_id = %s""",
+                    (conversation_id, turn_id)
+                )
+                row = await cursor.fetchone()
+                min_ts = row[0] if row else None
+                
+                if min_ts is None:
+                    # 按 turn_id 精确删除兜底
+                    await cursor.execute(
+                        """DELETE FROM conversation_archive
+                           WHERE conversation_id = %s AND turn_id = %s""",
+                        (conversation_id, turn_id)
+                    )
+                    return cursor.rowcount
+                
+                await cursor.execute(
+                    """DELETE FROM conversation_archive
+                       WHERE conversation_id = %s AND created_at >= %s""",
+                    (conversation_id, min_ts)
+                )
+                return cursor.rowcount
+
+    async def get_turn_by_message_id(self, conversation_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据 message_id 查询其所属的 turn 信息
+        """
+        pool = await self._get_mysql_pool()
+        if pool is None:
+            return None
+        
+        await self._ensure_schema()
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """SELECT turn_id, created_at FROM conversation_archive
+                       WHERE conversation_id = %s AND message_id = %s
+                       LIMIT 1""",
+                    (conversation_id, message_id)
+                )
+                row = await cursor.fetchone()
+                if row:
+                    return {"turn_id": row[0], "created_at": row[1]}
+                return None
 
     async def close(self) -> None:
         """关闭连接池"""
@@ -165,7 +229,7 @@ class ConversationArchiveStore:
         return self._mysql_pool
 
     async def _ensure_schema(self) -> None:
-        """确保表结构存在"""
+        """确保表结构存在（含增量列迁移）"""
         pool = await self._get_mysql_pool()
         if pool is None:
             return
@@ -180,10 +244,41 @@ class ConversationArchiveStore:
                         content LONGTEXT NOT NULL,
                         message_id VARCHAR(64) NULL,
                         created_at DOUBLE NOT NULL,
-                        INDEX idx_archive_conversation_time (conversation_id, created_at)
+                        turn_id VARCHAR(64) NULL,
+                        INDEX idx_archive_conversation_time (conversation_id, created_at),
+                        INDEX idx_archive_turn (conversation_id, turn_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                     """
                 )
+                # 增量迁移：turn_id 列
+                await cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'conversation_archive' AND COLUMN_NAME = 'turn_id'
+                    AND TABLE_SCHEMA = DATABASE()
+                    """
+                )
+                row = await cursor.fetchone()
+                if row and row[0] == 0:
+                    await cursor.execute(
+                        "ALTER TABLE conversation_archive ADD COLUMN turn_id VARCHAR(64) NULL"
+                    )
+                    await cursor.execute(
+                        "CREATE INDEX idx_archive_turn ON conversation_archive(conversation_id, turn_id)"
+                    )
+                # 增量迁移：idx_archive_turn 索引（若列已存在但索引未建）
+                await cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                    WHERE TABLE_NAME = 'conversation_archive' AND INDEX_NAME = 'idx_archive_turn'
+                    AND TABLE_SCHEMA = DATABASE()
+                    """
+                )
+                row = await cursor.fetchone()
+                if row and row[0] == 0:
+                    await cursor.execute(
+                        "CREATE INDEX idx_archive_turn ON conversation_archive(conversation_id, turn_id)"
+                    )
 
     def _env_int(self, key: str, default: int) -> int:
         """读取环境变量并转为整数"""

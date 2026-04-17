@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 
-from src.ragent_backend.schemas import ChatRequest, ChatResponse
+from src.ragent_backend.schemas import ChatRequest, ChatResponse, RollbackRequest
 from src.ragent_backend.store import build_archive_store, ConversationArchiveStore
 from src.ragent_backend.workflow import RAGWorkflow
 from src.ragent_backend.file_store import build_file_store, ConversationFileStore
@@ -96,14 +96,44 @@ def create_checkpointer():
         return None
 
 
-async def _rollback_checkpoints(checkpointer, thread_id: str, clean_checkpoint_id: Optional[str]) -> None:
+async def _trim_checkpoints(checkpointer, thread_id: str, keep_checkpoint_id: Optional[str]) -> None:
     """
-    用户中断流式输出后，物理回滚本轮产生的脏 checkpoint。
-    语义：只保留 clean_checkpoint_id 对应的状态，删除该 thread 下所有其他 checkpoint 记录。
+    物理裁剪 checkpoint：保留 keep_checkpoint_id 对应的状态，删除该 thread 下所有其他 checkpoint 记录。
+    支持 AsyncSqliteSaver 和 PostgresSaver，同时清理关联的 blobs/writes 表。
     """
-    if clean_checkpoint_id is None:
-        return
     
+    async def _safe_delete(db, sql, params):
+        try:
+            await db.execute(sql, params)
+        except Exception as e:
+            if "no such table" in str(e).lower() or "does not exist" in str(e).lower():
+                pass  # 表不存在则忽略
+            else:
+                raise
+    
+    try:
+        # PostgresSaver
+        if hasattr(checkpointer, '_async_connection') or type(checkpointer).__name__ == 'PostgresSaver':
+            conn = getattr(checkpointer, '_async_connection', None)
+            if conn is None:
+                return
+            if keep_checkpoint_id:
+                await conn.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = $1 AND checkpoint_id != $2",
+                    thread_id, keep_checkpoint_id
+                )
+                await _safe_delete(conn, "DELETE FROM checkpoint_blobs WHERE thread_id = $1 AND checkpoint_id != $2", (thread_id, keep_checkpoint_id))
+                await _safe_delete(conn, "DELETE FROM checkpoint_writes WHERE thread_id = $1 AND checkpoint_id != $2", (thread_id, keep_checkpoint_id))
+            else:
+                await conn.execute("DELETE FROM checkpoints WHERE thread_id = $1", thread_id)
+                await _safe_delete(conn, "DELETE FROM checkpoint_blobs WHERE thread_id = $1", (thread_id,))
+                await _safe_delete(conn, "DELETE FROM checkpoint_writes WHERE thread_id = $1", (thread_id,))
+            print(f"[TrimCheckpoint] Postgres trimmed for thread={thread_id}, kept={keep_checkpoint_id}")
+            return
+    except Exception as e:
+        print(f"[TrimCheckpoint] Postgres trim failed: {e}")
+    
+    # AsyncSqliteSaver / 兜底 SQLite
     db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
     if not Path(db_path).exists():
         return
@@ -111,14 +141,21 @@ async def _rollback_checkpoints(checkpointer, thread_id: str, clean_checkpoint_i
     try:
         import aiosqlite
         async with aiosqlite.connect(db_path) as db:
-            await db.execute(
-                "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ?",
-                (thread_id, clean_checkpoint_id)
-            )
+            if keep_checkpoint_id:
+                await db.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ?",
+                    (thread_id, keep_checkpoint_id)
+                )
+                await _safe_delete(db, "DELETE FROM checkpoint_blobs WHERE thread_id = ? AND checkpoint_id != ?", (thread_id, keep_checkpoint_id))
+                await _safe_delete(db, "DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id != ?", (thread_id, keep_checkpoint_id))
+            else:
+                await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+                await _safe_delete(db, "DELETE FROM checkpoint_blobs WHERE thread_id = ?", (thread_id,))
+                await _safe_delete(db, "DELETE FROM checkpoint_writes WHERE thread_id = ?", (thread_id,))
             await db.commit()
-        print(f"[Rollback] Checkpoint rolled back for thread={thread_id}, kept={clean_checkpoint_id}")
+        print(f"[TrimCheckpoint] SQLite trimmed for thread={thread_id}, kept={keep_checkpoint_id}")
     except Exception as e:
-        print(f"[Rollback] Failed to rollback checkpoints: {e}")
+        print(f"[TrimCheckpoint] SQLite trim failed: {e}")
 
 
 # 全局并发控制：限制同时执行的 ingest 后台任务数量，防止 LLM API 配额和内存被打爆
@@ -658,7 +695,7 @@ def create_app() -> FastAPI:
             finally:
                 # 5. 中断时回滚脏 checkpoint
                 if interrupted and clean_checkpoint_id:
-                    await _rollback_checkpoints(checkpointer, thread_id, clean_checkpoint_id)
+                    await _trim_checkpoints(checkpointer, thread_id, clean_checkpoint_id)
         
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -681,6 +718,111 @@ def create_app() -> FastAPI:
                 sockets.remove(websocket)
             if not sockets:
                 active_trace_ws.pop(conversation_id, None)
+
+    @app.post("/api/v1/conversations/{conversation_id}/rollback")
+    async def rollback_conversation(conversation_id: str, request: RollbackRequest) -> dict:
+        """
+        三位一体时间裁剪：回滚对话到指定消息边界。
+        同时清理：
+        1. LangGraph Checkpoint（状态层）
+        2. MySQL conversation_archive（存储层）
+        3. SQLite ltm.db（记忆层）
+        """
+        # 1. 获取目标 turn
+        turn_info = await archive_store.get_turn_by_message_id(conversation_id, request.target_message_id)
+        if not turn_info:
+            raise HTTPException(status_code=404, detail="Target message not found")
+        
+        target_turn_id = turn_info["turn_id"]
+        if not target_turn_id:
+            raise HTTPException(status_code=400, detail="Target message has no associated turn_id")
+        
+        # 2. 确定要保留的 checkpoint（状态层）
+        # 先从历史中提取目标 turn 之前的那个 turn_id
+        keep_checkpoint_id = None
+        config = {"configurable": {"thread_id": conversation_id}}
+        previous_turn_id = None
+        try:
+            history_msgs = await archive_store.load_full_history(conversation_id)
+            # 按 created_at 排序后提取 turn_id 序列
+            turn_order = []
+            seen_turns = set()
+            for m in history_msgs:
+                tid = m.get("turn_id")
+                if tid and tid not in seen_turns:
+                    seen_turns.add(tid)
+                    turn_order.append(tid)
+            if target_turn_id in turn_order:
+                target_idx = turn_order.index(target_turn_id)
+                if target_idx > 0:
+                    previous_turn_id = turn_order[target_idx - 1]
+        except Exception as e:
+            print(f"[Rollback] Failed to determine previous turn: {e}")
+        
+        try:
+            if hasattr(checkpointer, 'alist') and previous_turn_id:
+                candidates = []
+                async for cp in checkpointer.alist(config):
+                    # cp 是 CheckpointTuple，包含 config / checkpoint / metadata 等字段
+                    cfg = cp.config if isinstance(cp.config, dict) else {}
+                    checkpoint_id = cfg.get("configurable", {}).get("checkpoint_id")
+                    
+                    # 从 CheckpointTuple.checkpoint 提取状态
+                    checkpoint_state = cp.checkpoint if hasattr(cp, 'checkpoint') else cp
+                    if isinstance(checkpoint_state, dict):
+                        channel_values = checkpoint_state.get('channel_values', {})
+                    else:
+                        channel_values = getattr(checkpoint_state, 'channel_values', {}) or {}
+                    turn_id_in_cp = channel_values.get('current_turn_id') if isinstance(channel_values, dict) else None
+                    
+                    if turn_id_in_cp == previous_turn_id and checkpoint_id:
+                        ts = checkpoint_state.get('ts', 0) if isinstance(checkpoint_state, dict) else getattr(checkpoint_state, 'ts', 0)
+                        candidates.append((ts, checkpoint_id))
+                if candidates:
+                    # 取时间戳最大的（即最新的）一个前一 turn 的 checkpoint
+                    candidates.sort(key=lambda x: x[0])
+                    keep_checkpoint_id = candidates[-1][1]
+        except Exception as e:
+            print(f"[Rollback] Failed to list checkpoints: {e}")
+        
+        # 3. 执行三层回滚（互不阻断）
+        trimmed = {"checkpoint": False, "messages": 0, "ltm": 0}
+        
+        try:
+            await _trim_checkpoints(checkpointer, conversation_id, keep_checkpoint_id)
+            trimmed["checkpoint"] = True
+        except Exception as e:
+            print(f"[Rollback] Checkpoint trim failed: {e}")
+        
+        try:
+            trimmed["messages"] = await archive_store.delete_messages_from_turn(conversation_id, target_turn_id)
+        except Exception as e:
+            print(f"[Rollback] Message delete failed: {e}")
+        
+        try:
+            if workflow._ltm_store:
+                trimmed["ltm"] = workflow._ltm_store.delete_facts_from_turn(conversation_id, target_turn_id)
+        except Exception as e:
+            print(f"[Rollback] LTM delete failed: {e}")
+        
+        # 4. 更新 conversation 的 message_count
+        try:
+            history = await archive_store.load_full_history(conversation_id)
+            await conversation_store.update_conversation(
+                conversation_id,
+                message_count=len(history),
+                metadata={"last_rollback_turn_id": target_turn_id}
+            )
+        except Exception as e:
+            print(f"[Rollback] Failed to update conversation stats: {e}")
+        
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "trimmed_turn_id": target_turn_id,
+            "kept_checkpoint_id": keep_checkpoint_id,
+            "trimmed": trimmed,
+        }
 
     @app.get("/api/v1/history/{conversation_id}")
     async def get_history(conversation_id: str) -> dict:
