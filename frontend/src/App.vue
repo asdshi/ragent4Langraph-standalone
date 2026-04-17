@@ -5,58 +5,61 @@
       <el-aside width="320px" class="sidebar">
         <div class="sidebar-header">
           <div class="logo">
-            <el-icon size="28" color="var(--accent)"><MagicStick /></el-icon>
+            <el-icon size="28" color="var(--accent)">
+              <MagicStick />
+            </el-icon>
             <span class="logo-text">RAG Agent</span>
           </div>
           <p class="logo-subtitle">Intelligent Copilot</p>
         </div>
-        
+
         <div class="sidebar-actions">
-          <el-button 
-            type="primary" 
-            size="large" 
-            class="new-chat-btn"
-            @click="startNewChat"
-          >
-            <el-icon><Plus /></el-icon>
+          <el-button type="primary" size="large" class="new-chat-btn" @click="startNewChat">
+            <el-icon>
+              <Plus />
+            </el-icon>
             新建对话
           </el-button>
         </div>
-        
+
         <!-- 对话列表区域 -->
         <div class="conversation-section" :class="{ 'is-collapsed': isHistoryCollapsed }">
-          <div class="section-title" @click="isHistoryCollapsed = !isHistoryCollapsed" style="cursor: pointer; user-select: none; display: flex; justify-content: space-between;">
+          <div class="section-title" @click="isHistoryCollapsed = !isHistoryCollapsed"
+            style="cursor: pointer; user-select: none; display: flex; justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 10px;">
-              <el-icon><CopyDocument /></el-icon>
+              <el-icon>
+                <CopyDocument />
+              </el-icon>
               <span>历史对话</span>
-              <el-icon class="collapse-icon" :style="{ transform: isHistoryCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }"><ArrowDown /></el-icon>
+              <el-icon class="collapse-icon"
+                :style="{ transform: isHistoryCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }">
+                <ArrowDown />
+              </el-icon>
             </div>
-            <el-button 
-              v-if="conversations.length > 0"
-              link 
-              size="small" 
-              @click.stop="refreshConversations"
-              class="refresh-btn"
-            >
-              <el-icon><Refresh /></el-icon>
+            <el-button v-if="conversations.length > 0" link size="small" @click.stop="refreshConversations"
+              class="refresh-btn">
+              <el-icon>
+                <Refresh />
+              </el-icon>
             </el-button>
           </div>
-          
+
           <el-collapse-transition>
             <div v-show="!isHistoryCollapsed" class="conversation-list">
               <div v-if="conversations.length === 0" class="empty-conversations">
-                <el-icon size="24" color="var(--text-tertiary)"><ChatLineRound /></el-icon>
+                <el-icon size="24" color="var(--text-tertiary)">
+                  <ChatLineRound />
+                </el-icon>
                 <p>暂无历史记录</p>
               </div>
-              
-              <div
-                v-for="conv in conversations"
-                :key="conv.conversation_id"
+
+              <div v-for="conv in conversations" :key="conv.conversation_id"
                 :class="['conversation-item', { active: conversationId === conv.conversation_id }]"
-                @click="switchConversation(conv.conversation_id)"
-              >
+                @click="switchConversation(conv.conversation_id)">
                 <div class="conversation-icon">
-                  <el-icon><ChatDotSquare /></el-icon>
+                  <el-icon>
+                    <ChatDotSquare />
+                  </el-icon>
                 </div>
                 <div class="conversation-info">
                   <div class="conversation-title" :title="conv.title">{{ conv.title }}</div>
@@ -67,96 +70,79 @@
                     </span>
                   </div>
                 </div>
-                <el-button
-                  type="danger"
-                  link
-                  size="small"
-                  class="delete-conv-btn"
-                  @click.stop="deleteConversation(conv.conversation_id)"
-                >
-                  <el-icon><Delete /></el-icon>
+                <el-button type="danger" link size="small" class="delete-conv-btn"
+                  @click.stop="deleteConversation(conv.conversation_id)">
+                  <el-icon>
+                    <Delete />
+                  </el-icon>
                 </el-button>
               </div>
             </div>
           </el-collapse-transition>
         </div>
-        
+
         <!-- 文件管理区域 -->
         <div v-if="conversationId" class="file-section">
           <div class="section-title">
-            <el-icon><Files /></el-icon>
+            <el-icon>
+              <Files />
+            </el-icon>
             <span>知识库文件</span>
           </div>
-          
+
           <!-- 上传区域 -->
-          <input
-            ref="fileInput"
-            type="file"
-            style="display: none"
+          <input ref="fileInput" type="file" style="display: none"
             accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.yaml,.yml"
-            @change="handleFileSelect"
-          />
+            @change="handleFileSelect" />
           <div class="upload-area" @click="fileInput?.click()">
-            <el-icon class="upload-icon"><UploadFilled /></el-icon>
+            <el-icon class="upload-icon">
+              <UploadFilled />
+            </el-icon>
             <div class="upload-text">
               <div>拖拽或点击上传文件</div>
               <div class="upload-hint">支持 PDF, Word, Excel, PPT, Markdown, HTML等</div>
             </div>
           </div>
-          
+
           <!-- 文件列表 -->
           <div class="file-list">
             <div v-if="files.length === 0" class="empty-files">
-              <el-icon size="32" color="var(--text-tertiary)"><Box /></el-icon>
+              <el-icon size="32" color="var(--text-tertiary)">
+                <Box />
+              </el-icon>
               <p>知识库为空</p>
             </div>
-            
-            <div
-              v-for="file in files"
-              :key="file.file_id"
-              class="file-item"
-            >
+
+            <div v-for="file in files" :key="file.file_id" class="file-item">
               <div class="file-icon" :class="getFileIconClass(file.filename)">
                 <el-icon size="20">
                   <component :is="getFileIcon(file.filename)" />
                 </el-icon>
               </div>
-              
+
               <div class="file-info">
                 <div class="file-name" :title="file.filename">{{ file.filename }}</div>
                 <div class="file-size">{{ formatFileSize(file.size) }}</div>
               </div>
-              
+
               <div class="file-badges">
-                <el-tag 
-                  v-if="file.extract_method === 'vlm_ocr'"
-                  type="success"
-                  size="small"
-                  class="file-badge"
-                >
+                <el-tag v-if="file.extract_method === 'vlm_ocr'" type="success" size="small" class="file-badge">
                   OCR
                 </el-tag>
-                <el-tag 
-                  :type="getStatusType(file.status)" 
-                  size="small"
-                  class="file-badge"
-                >
+                <el-tag :type="getStatusType(file.status)" size="small" class="file-badge">
                   {{ getStatusText(file.status) }}
                 </el-tag>
               </div>
-              
-              <el-button
-                type="danger"
-                link
-                size="small"
-                @click="deleteFile(file.file_id)"
-              >
-                <el-icon><Delete /></el-icon>
+
+              <el-button type="danger" link size="small" @click="deleteFile(file.file_id)">
+                <el-icon>
+                  <Delete />
+                </el-icon>
               </el-button>
             </div>
           </div>
         </div>
-        
+
         <!-- 系统信息 -->
         <div class="system-info">
           <el-divider />
@@ -166,7 +152,7 @@
           </div>
         </div>
       </el-aside>
-      
+
       <!-- 主聊天区域 -->
       <el-main class="chat-area">
         <!-- 头部 -->
@@ -178,115 +164,81 @@
             </el-tag>
             <el-tag v-else size="small" type="warning">新对话</el-tag>
           </div>
-          
+
           <div class="header-right">
             <el-tooltip content="LangGraph 追踪" placement="bottom">
-              <el-button
-                circle
-                :type="showTracePanel ? 'primary' : 'default'"
-                @click="showTracePanel = !showTracePanel"
-              >
-                <el-icon><DataLine /></el-icon>
+              <el-button circle :type="showTracePanel ? 'primary' : 'default'"
+                @click="showTracePanel = !showTracePanel">
+                <el-icon>
+                  <DataLine />
+                </el-icon>
               </el-button>
             </el-tooltip>
             <el-tooltip content="设置" placement="bottom">
               <el-button circle @click="showSettings">
-                <el-icon><Setting /></el-icon>
+                <el-icon>
+                  <Setting />
+                </el-icon>
               </el-button>
             </el-tooltip>
           </div>
         </div>
-        
+
         <!-- 消息列表 -->
         <div ref="messagesContainer" class="messages-container">
           <div v-if="messages.length === 0" class="welcome-message">
-            <el-icon size="64" color="var(--border-hover)"><MagicStick /></el-icon>
+            <el-icon size="64" color="var(--border-hover)">
+              <MagicStick />
+            </el-icon>
             <h2>你好！我是 RAG Agent</h2>
             <p>你可以上传文件，然后向我提问关于文件内容的问题</p>
             <div class="quick-actions">
-              <el-button 
-                v-for="action in quickActions" 
-                :key="action"
-                type="default"
-                class="quick-action-btn"
-                @click="sendQuickAction(action)"
-              >
+              <el-button v-for="action in quickActions" :key="action" type="default" class="quick-action-btn"
+                @click="sendQuickAction(action)">
                 {{ action }}
               </el-button>
             </div>
           </div>
-          
-          <div
-            v-for="(turn, tIndex) in messageTurns"
-            :key="tIndex"
-            class="turn-group"
-          >
-            <!-- 横向 checkpoint 分隔线（第一轮不显示） -->
-            <div v-if="tIndex > 0" class="turn-divider">
-              <div class="turn-divider-line" />
-              <el-tooltip
-                v-if="turn.user && turn.user.message_id"
-                content="回溯到此处"
-                placement="top"
-              >
-                <div
-                  :class="['turn-divider-dot', { 'turn-divider-dot--active': tIndex === messageTurns.length - 1 && !isTyping }]"
-                  @click="rollbackToMessage(turn.user.message_id)"
-                />
-              </el-tooltip>
-              <div v-else class="turn-divider-dot turn-divider-dot--plain" />
+
+          <div v-for="(msg, index) in messages" :key="index" :class="['message', msg.role]">
+            <div class="message-avatar">
+              <el-avatar :size="36" :class="msg.role">
+                <el-icon v-if="msg.role === 'user'">
+                  <UserFilled />
+                </el-icon>
+                <el-icon v-else>
+                  <ChatDotRound />
+                </el-icon>
+              </el-avatar>
             </div>
 
-            <!-- Messages in this turn -->
-            <div class="turn-messages">
-              <div
-                v-for="(msg, mIndex) in turn.messages"
-                :key="mIndex"
-                :class="['message', msg.role]"
-              >
-                <div class="message-avatar">
-                  <el-avatar 
-                    :size="36" 
-                    :class="msg.role"
-                  >
-                    <el-icon v-if="msg.role === 'user'"><UserFilled /></el-icon>
-                    <el-icon v-else><ChatDotRound /></el-icon>
-                  </el-avatar>
-                </div>
-                
-                <div class="message-content-wrapper">
-                  <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
-                  <div class="message-time">
-                    {{ formatTime(msg.time) }}
-                  </div>
-                  
-                  <!-- 检索来源（仅 AI 消息显示） -->
-                  <div v-if="msg.sources && msg.sources.length > 0" class="message-sources">
-                    <el-collapse>
-                      <el-collapse-item title="检索来源">
-                        <div
-                          v-for="(source, idx) in msg.sources"
-                          :key="idx"
-                          class="source-item"
-                        >
-                          <el-tag size="small">{{ source.doc_id }}</el-tag>
-                          <span class="source-score">得分: {{ (source.score * 100).toFixed(1) }}%</span>
-                          <p class="source-content">{{ source.content.substring(0, 100) }}...</p>
-                        </div>
-                      </el-collapse-item>
-                    </el-collapse>
-                  </div>
-                </div>
+            <div class="message-content-wrapper">
+              <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
+              <div class="message-time">{{ formatTime(msg.time) }}</div>
+
+              <!-- 检索来源（仅 AI 消息显示） -->
+              <div v-if="msg.sources && msg.sources.length > 0" class="message-sources">
+                <el-collapse>
+                  <el-collapse-item title="检索来源">
+                    <div v-for="(source, idx) in msg.sources" :key="idx" class="source-item">
+                      <el-tag size="small">{{ source.doc_id }}</el-tag>
+                      <span class="source-score">得分: {{ (source.score * 100).toFixed(1) }}%</span>
+                      <p class="source-content">{{ source.content.substring(0, 100) }}...</p>
+                    </div>
+                  </el-collapse-item>
+                </el-collapse>
               </div>
             </div>
           </div>
-          
+
           <!-- 思考中指示器 -->
           <div v-if="isTyping" class="message assistant typing">
             <div class="message-avatar">
               <el-avatar :size="36" class="assistant">
-              <el-icon><ChatDotRound /></el-icon>
-            </el-avatar>
+                <el-icon>
+                  <ChatDotRound />
+                </el-icon>
+              </el-avatar>
             </div>
             <div class="typing-indicator">
               <span></span>
@@ -295,71 +247,53 @@
             </div>
           </div>
         </div>
-        
+
         <!-- 输入区域 -->
         <div class="input-area">
           <div class="input-wrapper">
-            <el-input
-              v-model="inputMessage"
-              type="textarea"
-              :rows="1"
-              placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
-              class="message-input"
-              resize="none"
-              @keydown="handleKeydown"
-            />
-            <el-button
-              v-if="!isTyping"
-              type="primary"
-              circle
-              class="send-btn"
-              :disabled="!inputMessage.trim()"
-              @click="sendMessage"
-            >
-              <el-icon><Promotion /></el-icon>
+            <el-input v-model="inputMessage" type="textarea" :rows="1" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+              class="message-input" resize="none" @keydown="handleKeydown" />
+            <el-button v-if="!isTyping" type="primary" circle class="send-btn" :disabled="!inputMessage.trim()"
+              @click="sendMessage">
+              <el-icon>
+                <Promotion />
+              </el-icon>
             </el-button>
-            <el-button
-              v-else
-              type="danger"
-              circle
-              class="send-btn"
-              @click="stopGeneration"
-            >
-              <el-icon><CircleClose /></el-icon>
+            <el-button v-else type="danger" circle class="send-btn" @click="stopGeneration">
+              <el-icon>
+                <CircleClose />
+              </el-icon>
             </el-button>
           </div>
           <div class="input-hint">
-            <el-icon size="12"><InfoFilled /></el-icon>
+            <el-icon size="12">
+              <InfoFilled />
+            </el-icon>
             <span>AI 生成内容仅供参考</span>
           </div>
         </div>
       </el-main>
-      
+
       <el-aside v-if="showTracePanel" width="360px" class="trace-sidebar">
         <TracePanel :traces="traceEvents" />
       </el-aside>
     </el-container>
-    
+
     <!-- 设置对话框 -->
-    <el-dialog
-      v-model="settingsVisible"
-      title="设置"
-      width="500px"
-      destroy-on-close
-    >
+    <el-dialog v-model="settingsVisible" title="设置" width="500px" destroy-on-close>
       <el-form :model="settings" label-width="120px">
         <el-form-item label="API 基础地址">
           <el-input v-model="settings.apiBase" placeholder="http://localhost:8000/api/v1" />
         </el-form-item>
-        
+
         <el-form-item label="检索数量 (Top K)">
           <el-slider v-model="settings.topK" :min="1" :max="20" show-stops />
         </el-form-item>
-        
+
         <el-form-item label="流式输出">
           <el-switch v-model="settings.streaming" />
         </el-form-item>
-        
+
         <el-form-item label="模型">
           <el-select v-model="settings.model" style="width: 100%">
             <el-option label="GPT-4o" value="gpt-4o" />
@@ -367,7 +301,7 @@
           </el-select>
         </el-form-item>
       </el-form>
-      
+
       <template #footer>
         <el-button @click="settingsVisible = false">取消</el-button>
         <el-button type="primary" @click="saveSettings">保存</el-button>
@@ -377,7 +311,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import TracePanel from './components/TracePanel.vue'
@@ -408,29 +342,6 @@ const showTracePanel = ref(true)
 const traceWs = ref(null)
 
 const apiBase = ref(settings.apiBase)
-
-// 按轮次（turn）分组消息，用于 checkpoint 时间线
-const messageTurns = computed(() => {
-  const turns = []
-  let currentTurn = null
-  
-  for (const msg of messages.value) {
-    if (msg.role === 'user') {
-      currentTurn = { user: msg, messages: [msg] }
-      turns.push(currentTurn)
-    } else if (currentTurn) {
-      currentTurn.messages.push(msg)
-      if (msg.role === 'assistant') {
-        currentTurn.assistant = msg
-      }
-    } else {
-      // 兜底：如果消息列表以 assistant 开头（异常数据），单独成组
-      turns.push({ user: null, assistant: msg, messages: [msg] })
-    }
-  }
-  
-  return turns
-})
 
 // 快捷操作
 const quickActions = [
@@ -496,19 +407,19 @@ async function refreshConversations() {
 // 切换对话
 async function switchConversation(convId) {
   if (convId === conversationId.value) return
-  
+
   disconnectTraceWs()
   conversationId.value = convId
   messages.value = []
   files.value = []
   traceEvents.value = []
   localStorage.setItem('currentConversationId', convId)
-  
+
   // 加载历史消息
   await loadHistory(convId)
   // 加载文件
   await loadFiles(convId)
-  
+
   ElMessage.success('已切换对话')
 }
 
@@ -520,12 +431,12 @@ async function deleteConversation(convId) {
       cancelButtonText: '取消',
       type: 'warning'
     })
-    
+
     await axios.delete(`${settings.apiBase}/conversations/${convId}`)
-    
+
     // 从列表中移除
     conversations.value = conversations.value.filter(c => c.conversation_id !== convId)
-    
+
     // 如果删除的是当前对话，清空界面
     if (conversationId.value === convId) {
       conversationId.value = null
@@ -533,7 +444,7 @@ async function deleteConversation(convId) {
       files.value = []
       localStorage.removeItem('currentConversationId')
     }
-    
+
     ElMessage.success('对话已删除')
   } catch (error) {
     if (error !== 'cancel') {
@@ -549,16 +460,16 @@ async function startNewChat() {
     const response = await axios.post(`${settings.apiBase}/conversations`, {
       title: null  // 让后端自动生成标题
     })
-    
+
     const newConv = response.data
     conversations.value.unshift(newConv)
-    
+
     // 切换到新对话
     conversationId.value = newConv.conversation_id
     messages.value = []
     files.value = []
     localStorage.setItem('currentConversationId', newConv.conversation_id)
-    
+
     ElMessage.success('已创建新对话')
   } catch (error) {
     ElMessage.error('创建对话失败: ' + (error.response?.data?.detail || error.message))
@@ -576,7 +487,7 @@ async function sendMessage() {
     content: query,
     time: new Date()
   })
-  
+
   inputMessage.value = ''
   scrollToBottom()
 
@@ -596,7 +507,7 @@ function sendQuickAction(action) {
 // 普通消息发送
 async function sendNormalMessage(query) {
   isTyping.value = true
-  
+
   try {
     const response = await axios.post(`${settings.apiBase}/chat`, {
       query,
@@ -607,7 +518,7 @@ async function sendNormalMessage(query) {
     })
 
     const data = response.data
-    
+
     if (!conversationId.value && data.conversation_id) {
       conversationId.value = data.conversation_id
       localStorage.setItem('currentConversationId', data.conversation_id)
@@ -684,7 +595,7 @@ async function sendStreamMessage(query) {
   if (conversationId.value) {
     connectTraceWs(conversationId.value)
   }
-  
+
   const assistantMessage = {
     role: 'assistant',
     content: '',
@@ -692,9 +603,9 @@ async function sendStreamMessage(query) {
     sources: []
   }
   messages.value.push(assistantMessage)
-  
+
   abortController.value = new AbortController()
-  
+
   try {
     const response = await fetch(`${settings.apiBase}/chat/stream`, {
       method: 'POST',
@@ -724,19 +635,19 @@ async function sendStreamMessage(query) {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6))
-            
+
             if (data.conversation_id && !conversationId.value) {
               newConvId = data.conversation_id
               connectTraceWs(newConvId)
             }
-            
+
             if (data.content) {
               assistantMessage.content += data.content
               // 触发更新
               messages.value = [...messages.value]
               scrollToBottom()
             }
-            
+
             if (data.error) {
               throw new Error(data.error)
             }
@@ -746,18 +657,13 @@ async function sendStreamMessage(query) {
         }
       }
     }
-    
+
     // 如果有新对话ID，更新并刷新列表
     if (newConvId) {
       conversationId.value = newConvId
       localStorage.setItem('currentConversationId', newConvId)
       loadFiles(newConvId)
       loadConversations()  // 刷新对话列表
-    }
-    
-    // 流式结束后从 MySQL 重新加载历史，以获取 message_id（用于回溯）
-    if (conversationId.value) {
-      await loadHistory(conversationId.value)
     }
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -782,40 +688,11 @@ async function loadHistory(convId) {
       messages.value = response.data.messages.map(m => ({
         role: m.role,
         content: m.content,
-        time: new Date(m.timestamp),
-        message_id: m.message_id
+        time: new Date(m.timestamp)
       }))
     }
   } catch (error) {
     console.error('加载历史失败:', error)
-  }
-}
-
-// 回溯到指定消息
-async function rollbackToMessage(messageId) {
-  if (!conversationId.value || !messageId) return
-  try {
-    await ElMessageBox.confirm('回溯后，该消息及之后的所有记录将被永久删除。是否继续？', '确认回溯', {
-      confirmButtonText: '确认',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-    
-    const response = await axios.post(
-      `${settings.apiBase}/conversations/${conversationId.value}/rollback`,
-      { target_message_id: messageId }
-    )
-    
-    if (response.data.success) {
-      ElMessage.success('已回溯到选定位置')
-      traceEvents.value = []
-      await loadHistory(conversationId.value)
-    }
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error('回溯失败:', error)
-      ElMessage.error('回溯失败: ' + (error.response?.data?.detail || error.message))
-    }
   }
 }
 
@@ -849,7 +726,7 @@ async function uploadFile(file) {
     )
 
     const data = response.data
-    
+
     if (data.conversation_id && conversationId.value.startsWith('temp_')) {
       conversationId.value = data.conversation_id
       localStorage.setItem('currentConversationId', data.conversation_id)
@@ -857,7 +734,7 @@ async function uploadFile(file) {
 
     ElMessage.success('上传成功，正在处理...')
     files.value.push(data)
-    
+
     // 轮询文件状态
     pollFileStatus(data.file_id)
   } catch (error) {
@@ -867,7 +744,7 @@ async function uploadFile(file) {
 
 async function loadFiles(convId) {
   if (!convId || convId.startsWith('temp_')) return
-  
+
   try {
     const response = await axios.get(
       `${settings.apiBase}/conversations/${convId}/files`
@@ -885,11 +762,11 @@ async function deleteFile(fileId) {
       cancelButtonText: '取消',
       type: 'warning'
     })
-    
+
     await axios.delete(
       `${settings.apiBase}/conversations/${conversationId.value}/files/${fileId}`
     )
-    
+
     files.value = files.value.filter(f => f.file_id !== fileId)
     ElMessage.success('文件已删除')
   } catch (error) {
@@ -903,7 +780,7 @@ async function pollFileStatus(fileId) {
   // 优化：延长轮询间隔，减少请求次数
   const maxAttempts = 20       // 最多查询20次（之前30次）
   const pollInterval = 3000    // 每3秒查询一次（之前2秒）
-  
+
   let attempts = 0
   console.log(`[FilePoll] 开始轮询文件 ${fileId} 状态`)
 
@@ -919,14 +796,14 @@ async function pollFileStatus(fileId) {
       const response = await axios.get(
         `${settings.apiBase}/conversations/${conversationId.value}/files`
       )
-      
+
       const file = response.data.files.find(f => f.file_id === fileId)
       if (file) {
         const index = files.value.findIndex(f => f.file_id === fileId)
         if (index !== -1) {
           files.value[index] = file
         }
-        
+
         if (file.status === 'ready' || file.status === 'error') {
           clearInterval(interval)
           console.log(`[FilePoll] 文件处理完成，状态: ${file.status}`)
@@ -1056,17 +933,17 @@ onUnmounted(() => {
   --bg-subtle: #f3f4f6;
   --border-color: rgba(0, 0, 0, 0.06);
   --border-hover: rgba(0, 0, 0, 0.15);
-  
+
   --text-primary: #111827;
   --text-secondary: #6b7280;
   --text-tertiary: #9ca3af;
-  
+
   --accent: #0f172a;
   --accent-light: #f8fafc;
-  
+
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.02);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.04);
-  
+
   --radius-sm: 8px;
   --radius-md: 16px;
   --radius-lg: 24px;
@@ -1084,9 +961,9 @@ body {
   height: 100vh;
   width: 100vw;
   padding: 24px 32px;
-  background-image: 
-    linear-gradient(to right, rgba(0,0,0,0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0,0,0,0.02) 1px, transparent 1px);
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
   background-size: 60px 60px;
   display: flex;
   justify-content: center;
@@ -1116,7 +993,9 @@ body {
 .sidebar::after {
   content: '';
   position: absolute;
-  top: 0; right: 0; bottom: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 1px;
   background: linear-gradient(to bottom, transparent, var(--border-color) 10%, var(--border-color) 90%, transparent);
 }
@@ -1173,10 +1052,14 @@ body {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
 }
-.new-chat-btn .el-icon { margin-right: 8px; }
+
+.new-chat-btn .el-icon {
+  margin-right: 8px;
+}
 
 /* 文件区域和标题 */
-.file-section, .conversation-section {
+.file-section,
+.conversation-section {
   display: flex;
   flex-direction: column;
 }
@@ -1249,7 +1132,9 @@ body {
   color: var(--accent);
 }
 
-.upload-text { text-align: center; }
+.upload-text {
+  text-align: center;
+}
 
 .upload-text div:first-child {
   font-size: 13px;
@@ -1264,7 +1149,8 @@ body {
 }
 
 /* 列表展示 */
-.file-list, .conversation-list {
+.file-list,
+.conversation-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1272,14 +1158,16 @@ body {
   padding-right: 8px;
 }
 
-.empty-files, .empty-conversations {
+.empty-files,
+.empty-conversations {
   text-align: center;
   padding: 30px 20px;
   color: var(--text-tertiary);
   font-size: 12px;
 }
 
-.file-item, .conversation-item {
+.file-item,
+.conversation-item {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1290,7 +1178,8 @@ body {
   transition: all 0.2s ease;
 }
 
-.file-item:hover, .conversation-item:hover {
+.file-item:hover,
+.conversation-item:hover {
   background: var(--bg-subtle);
 }
 
@@ -1298,7 +1187,8 @@ body {
   background: var(--accent-light);
 }
 
-.file-icon, .conversation-icon {
+.file-icon,
+.conversation-icon {
   width: 32px;
   height: 32px;
   border-radius: 8px;
@@ -1318,12 +1208,14 @@ body {
   border-color: var(--accent);
 }
 
-.file-info, .conversation-info {
+.file-info,
+.conversation-info {
   flex: 1;
   min-width: 0;
 }
 
-.file-name, .conversation-title {
+.file-name,
+.conversation-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
@@ -1332,7 +1224,8 @@ body {
   text-overflow: ellipsis;
 }
 
-.file-size, .conversation-meta {
+.file-size,
+.conversation-meta {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 4px;
@@ -1340,7 +1233,10 @@ body {
   gap: 8px;
 }
 
-.message-badge { color: var(--accent); font-weight: 500; }
+.message-badge {
+  color: var(--accent);
+  font-weight: 500;
+}
 
 .file-badges {
   flex-shrink: 0;
@@ -1356,18 +1252,38 @@ body {
   border-radius: 4px;
 }
 
-.delete-conv-btn { opacity: 0; transition: opacity 0.2s; color: var(--text-tertiary) !important; }
-.conversation-item:hover .delete-conv-btn { opacity: 1; }
-.delete-conv-btn:hover { color: #ef4444 !important; }
+.delete-conv-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: var(--text-tertiary) !important;
+}
 
-.refresh-btn { margin-left: auto; color: var(--text-tertiary) !important; }
-.refresh-btn:hover { color: var(--text-primary) !important; }
+.conversation-item:hover .delete-conv-btn {
+  opacity: 1;
+}
+
+.delete-conv-btn:hover {
+  color: #ef4444 !important;
+}
+
+.refresh-btn {
+  margin-left: auto;
+  color: var(--text-tertiary) !important;
+}
+
+.refresh-btn:hover {
+  color: var(--text-primary) !important;
+}
 
 .system-info {
   margin-top: auto;
   padding-top: 24px;
 }
-.system-info .el-divider { margin: 12px 0; border-color: var(--border-color); }
+
+.system-info .el-divider {
+  margin: 12px 0;
+  border-color: var(--border-color);
+}
 
 .info-item {
   display: flex;
@@ -1431,10 +1347,12 @@ body {
   color: var(--text-secondary) !important;
   transition: all 0.2s;
 }
+
 .header-right .el-button:hover {
   background: var(--bg-subtle) !important;
   color: var(--text-primary) !important;
 }
+
 .header-right .el-button--primary {
   border-color: var(--accent) !important;
   color: var(--accent) !important;
@@ -1459,6 +1377,7 @@ body {
   max-width: 600px;
   margin: 0 auto;
 }
+
 .welcome-message .el-icon {
   margin-bottom: 24px;
   color: var(--border-hover);
@@ -1472,7 +1391,11 @@ body {
   margin-bottom: 16px;
 }
 
-.welcome-message p { margin-bottom: 40px; font-size: 15px; line-height: 1.6; }
+.welcome-message p {
+  margin-bottom: 40px;
+  font-size: 15px;
+  line-height: 1.6;
+}
 
 .quick-actions {
   display: flex;
@@ -1505,8 +1428,15 @@ body {
 }
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message.user {
@@ -1547,7 +1477,7 @@ body {
 .message.assistant .message-content {
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.015);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.015);
   border-top-left-radius: 4px;
 }
 
@@ -1559,75 +1489,26 @@ body {
   text-align: right;
 }
 
-.message.user .message-time { text-align: left; }
-
-/* Turn Group & Checkpoint Divider */
-.turn-group {
-  display: flex;
-  flex-direction: column;
-  max-width: 100%;
-}
-
-.turn-divider {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 8px 0 24px;
-  position: relative;
-}
-
-.turn-divider-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  border-top: 1px dashed var(--border-hover);
-}
-
-.turn-divider-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 2px solid var(--text-tertiary);
-  background: var(--bg-surface);
-  cursor: pointer;
-  z-index: 1;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.turn-divider-dot:hover {
-  transform: scale(1.4);
-  border-color: #10b981;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.45);
-}
-
-.turn-divider-dot--active {
-  background: #10b981;
-  border-color: #10b981;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
-}
-
-.turn-divider-dot--plain {
-  cursor: default;
-  opacity: 0.3;
-}
-
-.turn-messages {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
+.message.user .message-time {
+  text-align: left;
 }
 
 /* 检索来源 */
-.message-sources { margin-top: 16px; }
-.message-sources .el-collapse { border: none; }
+.message-sources {
+  margin-top: 16px;
+}
+
+.message-sources .el-collapse {
+  border: none;
+}
+
 .message-sources .el-collapse-item__header {
   background: transparent;
   color: var(--text-tertiary);
   border-bottom: 1px dashed var(--border-color);
   font-size: 12px;
 }
+
 .message-sources .el-collapse-item__wrap {
   background: transparent;
   border: none;
@@ -1664,7 +1545,7 @@ body {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   border-top-left-radius: 4px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.015);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.015);
 }
 
 .typing-indicator span {
@@ -1675,12 +1556,27 @@ body {
   animation: gentle-pulse 1.4s infinite ease-in-out both;
 }
 
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+.typing-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
+}
 
 @keyframes gentle-pulse {
-  0%, 80%, 100% { transform: scale(0.8); opacity: 0.4; }
-  40% { transform: scale(1.2); opacity: 1; }
+
+  0%,
+  80%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.4;
+  }
+
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
 }
 
 /* 输入区域 */
@@ -1699,12 +1595,12 @@ body {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-hover);
   transition: all 0.3s;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.01);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.01);
 }
 
 .input-wrapper:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 .message-input :deep(.el-textarea__inner) {
@@ -1731,12 +1627,12 @@ body {
   transition: all 0.2s ease !important;
   width: 44px;
   height: 44px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
 }
 
 .send-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0,0,0,0.12) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12) !important;
 }
 
 .input-hint {
@@ -1779,10 +1675,24 @@ body {
 }
 
 /* 滚动条 */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; margin: 4px; }
-::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
 
 /* 侧边追踪面板 */
 .trace-sidebar {
