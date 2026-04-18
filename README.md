@@ -44,7 +44,7 @@ cd frontend && npm run dev -- --host
 
 - **Python** 3.10+
 - **Node.js** 18+ (前端)
-- **MySQL** 8.0+ (对话持久化)
+- **PostgreSQL** 14+ (Agent 层统一存储)
 - **阿里云百炼 API Key** (LLM + Embedding)
 
 ## 🔧 安装配置
@@ -81,14 +81,10 @@ OPENAI_API_KEY=sk-your-api-key
 OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 RAGENT_LLM_MODEL=qwen3.5-omni-flash
 
-# MySQL 配置
-RAGENT_MYSQL_HOST=127.0.0.1
-RAGENT_MYSQL_PORT=3306
-RAGENT_MYSQL_USER=root
-RAGENT_MYSQL_PASSWORD=your-password
-RAGENT_MYSQL_DATABASE=ragent
+# Agent 层存储 (PostgreSQL，必需)
+RAGENT_POSTGRES_URL=postgresql://user:password@localhost:5432/ragent
 
-# Checkpoint 存储 (SQLite)
+# IG 层存储 (SQLite，文件指纹)
 RAGENT_SQLITE_PATH=checkpoints.sqlite
 
 # 记忆管理
@@ -96,10 +92,10 @@ RAGENT_MAX_MESSAGES=20
 RAGENT_KEEP_RECENT=4
 ```
 
-### 5. 初始化 MySQL 数据库
+### 5. 初始化 PostgreSQL 数据库
 
 ```bash
-python scripts/init_mysql.py
+python scripts/init_postgres.py
 ```
 
 ## 📖 使用指南
@@ -214,7 +210,7 @@ rag-pro/
 │   ├── mcp_server/           # MCP 协议实现
 │   └── observability/        # Trace 和 Dashboard
 ├── scripts/                  # 工具脚本
-│   ├── init_mysql.py         # 数据库初始化
+│   ├── init_postgres.py      # PostgreSQL 数据库初始化
 │   └── start_dashboard.py    # 启动观测面板
 ├── config/                   # 配置文件
 ├── logs/                     # Trace 日志
@@ -276,7 +272,7 @@ LLM 生成回答
 | 环境变量 | 说明 | 默认值 |
 |---------|------|--------|
 | `OPENAI_API_KEY` | 阿里云百炼 API Key | 必填 |
-| `RAGENT_MYSQL_PASSWORD` | MySQL 密码 | 必填 |
+| `RAGENT_POSTGRES_URL` | PostgreSQL 连接字符串 | 必填 |
 | `RAGENT_MAX_MESSAGES` | 记忆窗口大小 | 20 |
 | `RAGENT_KEEP_RECENT` | 压缩后保留消息数 | 4 |
 | `RAGENT_PORT` | API 端口 | 8000 |

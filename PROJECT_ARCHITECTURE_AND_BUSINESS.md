@@ -657,7 +657,7 @@ keep_recent = 4    # 保留最近 4 条
 | **Embedding** | OpenAI/Azure/DashScope 兼容 API |
 | **LLM** | OpenAI/Azure/DeepSeek/Ollama 可切换 |
 | **Vision LLM** | Azure OpenAI GPT-4V / Qwen-VL |
-| **关系存储** | MySQL (aiomysql), SQLite, Postgres |
+| **关系存储** | PostgreSQL (asyncpg), SQLite (IG-layer only) |
 | **可观测性** | Streamlit, JSONL trace logs, Ragas |
 | **协议** | MCP (stdio), SSE, WebSocket |
 | **评估** | Ragas, Custom Evaluator, pytest |
@@ -759,7 +759,7 @@ rag-pro/
 │   └── fixtures/
 │
 ├── scripts/                         # 工具脚本
-│   ├── init_mysql.py                # 数据库初始化
+│   ├── init_postgres.py             # PostgreSQL 数据库初始化
 │   └── start_dashboard.py           # 启动观测面板
 │
 ├── config/

@@ -30,7 +30,6 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # LangGraph checkpointer
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 
 from src.ragent_backend.schemas import ChatRequest, ChatResponse, RollbackRequest
@@ -45,55 +44,17 @@ from src.core.settings import load_settings
 def create_checkpointer():
     """
     创建 checkpointer
-    优先使用 Postgres，回退到 AsyncSqliteSaver，最后兜底 InMemorySaver
+    Agent 层统一使用 PostgreSQL，不再支持 SQLite / InMemory fallback
     """
     postgres_url = os.getenv("RAGENT_POSTGRES_URL")
-    if postgres_url:
-        try:
-            checkpointer = PostgresSaver.from_conn_string(postgres_url)
-            return checkpointer
-        except Exception as e:
-            print(f"[Checkpointer] Failed to init Postgres: {e}, fallback to Sqlite")
-    
-    db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
-    print(f"[Checkpointer] Using Sqlite: {db_path}")
-    
-    # 优先异步 SQLite（真流式 workflow.run_stream 需要 async checkpointer）
-    # uvicorn 调用 create_app() 时事件循环已在运行，不能在运行中的 loop 上调用 run_until_complete()，
-    # 所以派一个独立线程去跑 asyncio.run()，再用同步的 future.result() 等结果拿回来。
-    try:
-        import concurrent.futures
-        
-        def _create_async_checkpointer(path: str):
-            async def _make():
-                import aiosqlite
-                from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-                conn = await aiosqlite.connect(path)
-                return AsyncSqliteSaver(conn=conn)
-            return asyncio.run(_make())
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_create_async_checkpointer, db_path)
-            return future.result()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"[Checkpointer] Failed to create AsyncSqliteSaver: {e}")
-    
-    # 回退同步 SQLite
-    try:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        return SqliteSaver(conn=str(db_path))
-    except Exception as e:
-        print(f"[Checkpointer] Failed to create SqliteSaver(conn=...): {e}")
-    
-    # 最后兜底内存
-    try:
-        from langgraph.checkpoint.memory import InMemorySaver
-        return InMemorySaver()
-    except Exception as e:
-        print(f"[Checkpointer] Failed to create InMemorySaver: {e}")
-        return None
+    if not postgres_url:
+        raise ValueError(
+            "RAGENT_POSTGRES_URL is required. "
+            "Example: postgresql://user:password@localhost:5432/ragent"
+        )
+    checkpointer = PostgresSaver.from_conn_string(postgres_url)
+    print(f"[Checkpointer] Using PostgreSQL: {postgres_url.replace(postgres_url.split(':')[-1].split('@')[0], '***')}")
+    return checkpointer
 
 
 async def _trim_checkpoints(checkpointer, thread_id: str, keep_checkpoint_id: Optional[str]) -> None:
@@ -132,30 +93,6 @@ async def _trim_checkpoints(checkpointer, thread_id: str, keep_checkpoint_id: Op
             return
     except Exception as e:
         print(f"[TrimCheckpoint] Postgres trim failed: {e}")
-    
-    # AsyncSqliteSaver / 兜底 SQLite
-    db_path = os.getenv("RAGENT_SQLITE_PATH", "checkpoints.sqlite")
-    if not Path(db_path).exists():
-        return
-    
-    try:
-        import aiosqlite
-        async with aiosqlite.connect(db_path) as db:
-            if keep_checkpoint_id:
-                await db.execute(
-                    "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ?",
-                    (thread_id, keep_checkpoint_id)
-                )
-                await _safe_delete(db, "DELETE FROM checkpoint_blobs WHERE thread_id = ? AND checkpoint_id != ?", (thread_id, keep_checkpoint_id))
-                await _safe_delete(db, "DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id != ?", (thread_id, keep_checkpoint_id))
-            else:
-                await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-                await _safe_delete(db, "DELETE FROM checkpoint_blobs WHERE thread_id = ?", (thread_id,))
-                await _safe_delete(db, "DELETE FROM checkpoint_writes WHERE thread_id = ?", (thread_id,))
-            await db.commit()
-        print(f"[TrimCheckpoint] SQLite trimmed for thread={thread_id}, kept={keep_checkpoint_id}")
-    except Exception as e:
-        print(f"[TrimCheckpoint] SQLite trim failed: {e}")
 
 
 # 全局并发控制：限制同时执行的 ingest 后台任务数量，防止 LLM API 配额和内存被打爆
@@ -807,7 +744,7 @@ def create_app() -> FastAPI:
         
         try:
             if workflow._ltm_store:
-                trimmed["ltm"] = workflow._ltm_store.delete_facts_from_turn(conversation_id, target_turn_id)
+                trimmed["ltm"] = await workflow._ltm_store.delete_facts_from_turn(conversation_id, target_turn_id)
         except Exception as e:
             print(f"[Rollback] LTM delete failed: {e}")
         
@@ -893,7 +830,8 @@ def create_app() -> FastAPI:
     async def shutdown():
         """关闭时清理资源"""
         await archive_store.close()
-        # file_store 不需要显式关闭（没有连接池）
+        await file_store.close()
+        await conversation_store.close()
 
     return app
 

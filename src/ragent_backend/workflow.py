@@ -258,7 +258,7 @@ class RAGWorkflow:
         if self._ltm_store and state.get("user_id"):
             try:
                 query = state.get("rewritten_query") or state.get("query", "")
-                memories = self._ltm_store.retrieve_facts(
+                memories = await self._ltm_store.retrieve_facts(
                     user_id=state["user_id"],
                     query=query,
                     top_k=3,
@@ -615,7 +615,7 @@ class RAGWorkflow:
                     try:
                         facts = await self._ltm_store.extract_facts(query, answer, self._llm)
                         if facts:
-                            self._ltm_store.save_facts(user_id, facts, conversation_id=conversation_id, turn_id=turn_id)
+                            await self._ltm_store.save_facts(user_id, facts, conversation_id=conversation_id, turn_id=turn_id)
                             print(f"[Archive] Extracted {len(facts)} LTM facts for user {user_id}")
                     except Exception as e:
                         print(f"[Archive] LTM extraction failed: {e}")
