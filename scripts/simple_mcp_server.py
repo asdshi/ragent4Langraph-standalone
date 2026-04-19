@@ -111,59 +111,81 @@ async def web_search_handler(query: str, max_results: int = 5) -> types.CallTool
         import urllib.parse
         import re
         
-        url = "https://duckduckgo.com/html/"
+        # 使用 DuckDuckGo HTML 版本
+        url = "https://html.duckduckgo.com/html/"
         data = urllib.parse.urlencode({"q": query}).encode("utf-8")
         
         req = urllib.request.Request(
             url,
             data=data,
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
-                "Accept": "text/html",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://duckduckgo.com/",
             },
         )
         
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             html = resp.read().decode("utf-8", errors="ignore")
         
-        # 简单正则提取结果
+        # 提取搜索结果
         results: List[Dict[str, str]] = []
         
-        # 提取链接和标题
-        link_pattern = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
-        snippet_pattern = re.compile(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', re.S)
+        # DuckDuckGo HTML 结果格式：.result 包含 .result__a (标题+链接) 和 .result__snippet (摘要)
+        result_blocks = re.findall(
+            r'<div class="result[^"]*"[^>]*>.*?<h2 class="result__title">.*?</h2>.*?</div>\s*</div>',
+            html, re.S
+        )
         
-        links = link_pattern.findall(html)
-        snippets = snippet_pattern.findall(html)
+        if not result_blocks:
+            # fallback：用更宽松的模式
+            result_blocks = re.findall(
+                r'<div class="web-result[^"]*"[^>]*>.*?</div>\s*</div>',
+                html, re.S
+            )
         
-        for i, (href, title_raw) in enumerate(links[:max_results]):
-            # 清理标题 HTML 标签
-            title = re.sub(r'<[^>]+>', '', title_raw)
-            snippet = re.sub(r'<[^>]+>', '', snippets[i]) if i < len(snippets) else ""
+        for block in result_blocks[:max_results]:
+            # 提取标题和链接
+            title_match = re.search(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+            # 提取摘要
+            snippet_match = re.search(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', block, re.S)
             
-            # DuckDuckGo 有时返回重定向链接
+            if not title_match:
+                continue
+            
+            href = title_match.group(1)
+            title = re.sub(r'<[^>]+>', '', title_match.group(2))
+            snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)) if snippet_match else ""
+            
+            # 处理 DuckDuckGo 重定向链接
             if href.startswith("//"):
                 href = "https:" + href
             elif href.startswith("/"):
                 href = "https://duckduckgo.com" + href
             
             results.append({
-                "title": title,
+                "title": title.strip(),
                 "url": href,
                 "snippet": snippet[:200] + "..." if len(snippet) > 200 else snippet,
             })
         
         if not results:
+            # 可能是 DuckDuckGo 返回了 CAPTCHA 或空页面
             return types.CallToolResult(
-                content=[types.TextContent(type="text", text=f"No results found for: {query}")],
+                content=[types.TextContent(
+                    type="text",
+                    text=f"未能获取搜索结果（DuckDuckGo 可能要求验证）。\n\n建议：直接访问搜索引擎查询「{query}」"
+                )],
                 isError=False,
             )
         
-        lines = [f"Search results for: {query}\n"]
+        lines = [f"搜索「{query}」的结果：\n"]
         for i, r in enumerate(results, 1):
             lines.append(f"{i}. {r['title']}")
-            lines.append(f"   URL: {r['url']}")
-            lines.append(f"   {r['snippet']}")
+            lines.append(f"   链接: {r['url']}")
+            if r['snippet']:
+                lines.append(f"   摘要: {r['snippet']}")
             lines.append("")
         
         return types.CallToolResult(
@@ -173,7 +195,7 @@ async def web_search_handler(query: str, max_results: int = 5) -> types.CallTool
         
     except Exception as e:
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"Search failed: {e}")],
+            content=[types.TextContent(type="text", text=f"搜索失败: {e}\n\n建议：直接访问搜索引擎查询「{query}」")],
             isError=True,
         )
 

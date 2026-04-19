@@ -268,13 +268,17 @@ async def _detect_intent_with_llm(
 ) -> IntentResult:
     """使用 LLM 做结构化意图三分类。"""
 
-    # 构建工具描述
+    # 构建工具描述（从 OpenAI function schema 中提取）
     tools_text = ""
     if available_tools:
-        tools_text = "\n".join([
-            f"- {t.get('name', 'unknown')}: {t.get('description', '无描述')[:80]}"
-            for t in available_tools
-        ])
+        lines = []
+        for t in available_tools:
+            # OpenAI schema: {"type": "function", "function": {"name": ..., "description": ...}}
+            func = t.get("function") or {}
+            name = func.get("name") or t.get("name", "unknown")
+            desc = func.get("description") or t.get("description", "无描述")
+            lines.append(f"- {name}: {desc[:80]}")
+        tools_text = "\n".join(lines)
     else:
         tools_text = "（当前无可用的外部工具）"
 
