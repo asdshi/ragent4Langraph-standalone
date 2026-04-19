@@ -33,6 +33,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 # LangGraph checkpointer
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -44,6 +45,9 @@ from src.ragent_backend.file_store import build_file_store, ConversationFileStor
 from src.ragent_backend.conversation_store import build_conversation_store, ConversationStore
 from src.ingestion.pipeline import IngestionPipeline
 from src.core.settings import load_settings
+from src.tool_agent.tool_registry import ToolRegistry
+from src.tool_agent.builtin_tools import register_builtin_tools
+from src.tool_agent.mcp_client import MCPClient
 
 
 def create_checkpointer():
@@ -222,8 +226,9 @@ async def ingest_file_task(
 def create_app() -> FastAPI:
     app = FastAPI(
         title="RAG Agent Backend", 
-        version="0.3.0",
-        description="支持会话级知识库的 RAG Agent"
+        version="0.4.0",
+        description="支持会话级知识库的 RAG Agent（三分支意图路由 + 统一工具层）",
+        lifespan=lifespan,
     )
 
     # 添加 CORS 中间件
@@ -237,6 +242,11 @@ def create_app() -> FastAPI:
 
     # 加载配置
     settings = load_settings()
+
+    # 初始化 ToolRegistry（内置工具 + MCP 外部工具）
+    tool_registry = ToolRegistry()
+    register_builtin_tools(tool_registry)
+    print(f"[Init] Registered {tool_registry.tool_count} built-in tools")
 
     # 初始化组件
     checkpointer = create_checkpointer()
@@ -261,14 +271,49 @@ def create_app() -> FastAPI:
         print(f"[Init] Failed to init LLM: {e}")
         llm = None
 
-    # 创建工作流
+    # 创建工作流（传入 tool_registry）
     workflow = RAGWorkflow(
         store=archive_store,
         llm=llm,
         checkpointer=checkpointer,
         max_messages=int(os.getenv("RAGENT_MAX_MESSAGES", "20")),
         keep_recent=int(os.getenv("RAGENT_KEEP_RECENT", "4")),
+        tool_registry=tool_registry,
     )
+
+    # lifespan：异步连接 MCP Servers
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 启动时连接配置的 MCP Servers
+        if settings.mcp_servers:
+            for name, cfg in settings.mcp_servers.items():
+                try:
+                    client = MCPClient(server_name=name)
+                    if cfg.transport == "stdio":
+                        await client.connect_stdio(
+                            command=cfg.command or "",
+                            args=cfg.args,
+                            env=cfg.env,
+                            cwd=cfg.cwd,
+                        )
+                    elif cfg.transport == "sse":
+                        await client.connect_sse(url=cfg.url or "")
+                    else:
+                        print(f"[MCP] Unknown transport '{cfg.transport}' for server '{name}'")
+                        continue
+                    
+                    await tool_registry.register_from_mcp_client(
+                        client, name, timeout_seconds=cfg.timeout_seconds
+                    )
+                    print(f"[MCP] Connected and registered server: {name}")
+                except Exception as e:
+                    print(f"[MCP] Failed to connect server '{name}': {e}")
+        
+        yield
+        
+        # 关闭时断开所有 MCP 连接
+        await tool_registry.disconnect_all_mcp()
+        print("[MCP] All MCP connections closed")
 
     @app.get("/health")
     async def health() -> dict:

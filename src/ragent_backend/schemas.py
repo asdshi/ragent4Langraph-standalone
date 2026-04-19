@@ -94,9 +94,12 @@ class RAGState(TypedDict, total=False):
     top_k: int
     
     # === 意图识别 ===
+    intent_type: str
     intent_confidence: float
     need_clarify: bool
     clarify_prompt: str
+    target_tool: Optional[str]
+    tool_args: Optional[Dict[str, Any]]
     
     # === 检索结果 ===
     retrieval_context: str

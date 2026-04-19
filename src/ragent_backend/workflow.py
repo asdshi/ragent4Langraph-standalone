@@ -117,6 +117,9 @@ class RAGWorkflow:
         if intent_type == "clarify" or state.get("need_clarify"):
             return "clarify"
         if intent_type == "tool":
+            # 如果 LLM 不可用，无法运行 tool_subgraph，回退到 retrieve
+            if self._llm is None:
+                return "retrieve"
             return "tool_subgraph"
         return "retrieve"
 
@@ -357,6 +360,8 @@ class RAGWorkflow:
             "intent_confidence": intent.confidence,
             "need_clarify": intent.need_clarify,
             "clarify_prompt": intent.clarify_prompt or "",
+            "target_tool": intent.target_tool,
+            "tool_args": intent.tool_args,
             "available_tools": available_tools,
             "trace_events": [
                 *state.get("trace_events", []),

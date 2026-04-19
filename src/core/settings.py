@@ -197,6 +197,21 @@ class IngestionSettings:
 
 
 @dataclass(frozen=True)
+class MCPServerConfig:
+    """单个 MCP Server 的配置。"""
+    transport: str  # "stdio" | "sse"
+    # stdio 参数
+    command: Optional[str] = None
+    args: Optional[List[str]] = None
+    env: Optional[Dict[str, str]] = None
+    cwd: Optional[str] = None
+    # sse 参数
+    url: Optional[str] = None
+    # 通用参数
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class Settings:
     llm: LLMSettings
     embedding: EmbeddingSettings
@@ -207,6 +222,7 @@ class Settings:
     observability: ObservabilitySettings
     ingestion: Optional[IngestionSettings] = None
     vision_llm: Optional[VisionLLMSettings] = None
+    mcp_servers: Optional[Dict[str, MCPServerConfig]] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Settings":
@@ -255,6 +271,25 @@ class Settings:
                 deployment_name=vision_llm.get("deployment_name"),
                 base_url=vision_llm.get("base_url"),
             )
+
+        # MCP Servers 配置（可选）
+        mcp_servers_settings = None
+        if "mcp_servers" in data:
+            mcp_servers_raw = data.get("mcp_servers")
+            if isinstance(mcp_servers_raw, dict):
+                mcp_servers_settings = {}
+                for server_name, server_cfg in mcp_servers_raw.items():
+                    if not isinstance(server_cfg, dict):
+                        continue
+                    mcp_servers_settings[server_name] = MCPServerConfig(
+                        transport=server_cfg.get("transport", "stdio"),
+                        command=server_cfg.get("command"),
+                        args=server_cfg.get("args"),
+                        env=server_cfg.get("env"),
+                        cwd=server_cfg.get("cwd"),
+                        url=server_cfg.get("url"),
+                        timeout_seconds=float(server_cfg.get("timeout_seconds", 30.0)),
+                    )
 
         settings = cls(
             llm=LLMSettings(
@@ -308,6 +343,7 @@ class Settings:
             ),
             ingestion=ingestion_settings,
             vision_llm=vision_llm_settings,
+            mcp_servers=mcp_servers_settings,
         )
 
         return settings
