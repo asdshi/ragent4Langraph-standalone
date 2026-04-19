@@ -81,14 +81,16 @@ const inspectorExpanded = ref(true)
 const stepLabels = {
   session: '会话初始化',
   intent: '意图解析',
+  clarify: '澄清提示',
   retrieve: '知识库检索',
+  tool_subgraph: '工具调用',
   generate: '最终生成',
   memory_manage: '记忆管理',
   archive: '归档存储'
 }
 
 const displaySteps = computed(() => {
-  const nodes = ['session', 'intent', 'retrieve', 'generate', 'memory_manage', 'archive']
+  const nodes = ['session', 'intent', 'clarify', 'retrieve', 'tool_subgraph', 'generate', 'memory_manage', 'archive']
   const result = []
   
   for (const node of nodes) {

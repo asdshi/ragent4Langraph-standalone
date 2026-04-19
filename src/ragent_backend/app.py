@@ -320,8 +320,16 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {
             "status": "ok",
-            "version": "0.3.0",
-            "features": ["rolling_memory", "conversation_kb", "file_upload"]
+            "version": "0.4.0",
+            "features": [
+                "rolling_memory",
+                "conversation_kb",
+                "file_upload",
+                "3_way_intent_routing",
+                "unified_tool_layer",
+                "tool_subgraph",
+                "mcp_client",
+            ]
         }
 
     # ==================== 文件管理 API ====================
