@@ -96,23 +96,6 @@ def build_tool_subgraph(
         return update
     
     # ------------------------------------------------------------------
-    # router_node: 根据 think_node 输出路由
-    # ------------------------------------------------------------------
-    def router_node(state: ToolSubgraphState) -> str:
-        """路由到下一个节点。"""
-        iteration = state.get("iteration_count", 0)
-        max_iter = state.get("max_iterations", max_iterations)
-        next_node = state.get("next_node", "summarize")
-        
-        # 强制结束：超过最大迭代次数
-        if iteration >= max_iter:
-            return "summarize"
-        
-        if next_node == "tool":
-            return "tool"
-        return "summarize"
-    
-    # ------------------------------------------------------------------
     # tool_node: 执行工具调用
     # ------------------------------------------------------------------
     async def tool_node(state: ToolSubgraphState) -> Dict[str, Any]:
@@ -215,16 +198,14 @@ def build_tool_subgraph(
     graph = StateGraph(ToolSubgraphState)
     
     graph.add_node("think", think_node)
-    graph.add_node("router", router_node)
     graph.add_node("tool", tool_node)
     graph.add_node("summarize", summarize_node)
     
-    # 边
+    # 边：think 直接路由到 tool 或 summarize（根据 think_node 写入的 next_node）
     graph.add_edge(START, "think")
-    graph.add_edge("think", "router")
     graph.add_conditional_edges(
-        "router",
-        lambda state: router_node(state),
+        "think",
+        lambda state: "summarize" if state.get("iteration_count", 0) >= state.get("max_iterations", max_iterations) else state.get("next_node", "summarize"),
         {"tool": "tool", "summarize": "summarize"}
     )
     graph.add_edge("tool", "think")  # 循环回到 think
