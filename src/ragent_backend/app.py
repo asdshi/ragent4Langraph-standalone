@@ -13,8 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from typing import AsyncGenerator, Optional
 from pathlib import Path
+
+# Windows: psycopg async 需要 SelectorEventLoop，而不是 ProactorEventLoop
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # 加载 .env 文件
 try:
@@ -44,16 +49,42 @@ from src.core.settings import load_settings
 def create_checkpointer():
     """
     创建 checkpointer
-    Agent 层统一使用 PostgreSQL，不再支持 SQLite / InMemory fallback
+    Agent 层统一使用 PostgreSQL (AsyncPostgresSaver)
     """
+    import concurrent.futures
+    import selectors
+    from psycopg import AsyncConnection
+    from psycopg.rows import dict_row
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
     postgres_url = os.getenv("RAGENT_POSTGRES_URL")
     if not postgres_url:
         raise ValueError(
             "RAGENT_POSTGRES_URL is required. "
             "Example: postgresql://user:password@localhost:5432/ragent"
         )
-    checkpointer = PostgresSaver.from_conn_string(postgres_url)
-    print(f"[Checkpointer] Using PostgreSQL: {postgres_url.replace(postgres_url.split(':')[-1].split('@')[0], '***')}")
+
+    def _create():
+        async def _make():
+            conn = await AsyncConnection.connect(
+                postgres_url,
+                autocommit=True,
+                prepare_threshold=0,
+                row_factory=dict_row,
+            )
+            saver = AsyncPostgresSaver(conn)
+            await saver.setup()
+            return saver
+        return asyncio.run(
+            _make(),
+            loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_create)
+        checkpointer = future.result()
+
+    print(f"[Checkpointer] Using PostgreSQL (Async)")
     return checkpointer
 
 
@@ -844,12 +875,15 @@ def _chunk_text(text: str, size: int):
 
 def run() -> None:
     """运行服务器"""
+    # Windows: loop="none" 让 Uvicorn 使用当前策略创建的事件循环
+    # 我们在顶部已设置 WindowsSelectorEventLoopPolicy，避免 psycopg add_reader 报错
     uvicorn.run(
         "src.ragent_backend.app:create_app", 
         factory=True, 
         host="0.0.0.0", 
         port=int(os.getenv("RAGENT_PORT", "8000")),
-        reload=False
+        reload=False,
+        loop="none"
     )
 
 

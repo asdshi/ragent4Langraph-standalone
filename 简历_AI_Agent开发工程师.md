@@ -7,7 +7,7 @@
 | 项目 | 内容 |
 |------|------|
 | **姓名** | [你的名字] |
-| **意向岗位** | AI Agent开发工程师 / 大模型应用工程师 / RAG开发工程师 |
+| **意向岗位** | AI Agent开发工程师 / 大模型应用工程师 / RAG开发工程师 / LLM Agent工程师 |
 | **工作年限** | [X] 年 |
 | **学历** | [本科/硕士] · [计算机/软件工程/人工智能等相关专业] |
 | **所在城市** | [城市] |
@@ -18,15 +18,20 @@
 
 ## 技术栈
 
-| 维度 | 关键词 |
-|------|--------|
-| **Agent框架** | LangGraph · LangChain · LlamaIndex · ReAct · CoT · Task Planning · Tool Use · HITL · Evaluator-Optimizer · Multi-Agent System |
-| **RAG技术** | Hybrid Search · Dense Retrieval · Sparse Retrieval(BM25) · RRF Fusion · Cross-Encoder Rerank · 向量检索 · 知识库构建 · 查询优化(Query Decomposition) |
-| **大模型生态** | GPT-4 · Claude · Qwen · DeepSeek · OpenAI API · Embedding模型 · Prompt Engineering · Function Calling |
-| **后端** | Python · FastAPI · RESTful API · SSE流式输出 · MCP(Model Context Protocol) |
-| **前端** | Vue 3 · React · Element Plus · Streamlit |
-| **数据库** | Chroma · Qdrant · PostgreSQL · MySQL · SQLite · Redis |
-| **工程化** | Docker · pytest · TDD · 工厂模式 · 配置驱动 · 模块化架构 · 幂等设计 |
+| 方向 | 技术 |
+|------|------|
+| **Agent框架** | LangGraph · LangChain · LlamaIndex · AutoGen · CrewAI |
+| **Agent设计模式** | **Multi-Agent System** · **ReAct** · **CoT思维链** · **Tool Use / Function Calling** · **Task Planning** · **HITL人机协同** · **Evaluator-Optimizer** · **记忆机制** · **Prompt Engineering** |
+| **RAG技术** | **检索增强生成(RAG)** · **混合检索(Hybrid Search)** · **BM25稀疏检索** · **Dense向量检索** · **Rerank重排序** · **RRF融合排序** · **知识库构建** · **查询优化(Query Optimization)** |
+| **编程语言** | Python(主力) · TypeScript/JavaScript · SQL |
+| **后端框架** | FastAPI · Flask · RESTful API设计 · SSE流式输出 · WebSocket |
+| **前端框架** | Vue 3 · React · Element Plus · Vite · Streamlit |
+| **大模型生态** | **GPT-4 / Claude / Qwen / DeepSeek** · **OpenAI API** · **Embedding模型** · **Chat模型** · **模型微调(Fine-tuning)** |
+| **向量数据库** | Chroma · Qdrant |
+| **数据库/缓存** | PostgreSQL · MySQL · SQLite · Redis |
+| **协议与集成** | **MCP(Model Context Protocol)** · **Function Calling** · **API编排** |
+| **工程化** | Docker · pytest · CI/CD · Git · 模块化架构 · 微服务设计 |
+| **评估与观测** | **Ragas评估** · Pipeline Trace · 瀑布流可视化 · 黄金测试集 · A/B Test · 消融实验(Ablation Study) |
 
 ---
 
@@ -34,57 +39,178 @@
 
 ---
 
-### 项目一：智能知识检索与问答系统（RAG-Pro）| 个人项目
+### 项目一：RAG-Pro — 生产级模块化RAG知识库系统（个人项目）
 
-**背景**：针对企业级知识库场景中文档分散、检索精度不足、AI Agent难以接入私有知识的共性痛点，设计并实现了面向生产环境的模块化RAG检索框架。
+> **项目定位**：面向生产环境的企业级对话级知识库问答系统，支持REST API与**MCP协议**接入  
+> **技术栈**：Python · FastAPI · **LangGraph** · **LangChain** · Vue 3 · Chroma · PostgreSQL · MySQL · **MCP协议**  
+> **GitHub**：[你的仓库链接]
 
-**目标**：构建支持Hybrid Search + MCP协议的智能知识检索系统，实现精准语义检索与AI Agent直接调用私有知识库的能力，将检索命中率提升至90%以上。
+#### 核心指标
 
-**过程**：
-• 基于 **LangGraph 状态机**编排端到端RAG Pipeline，实现 Retrieve → Rerank → Generate 的完整链路，支持SSE流式输出与Vue 3前端实时渲染
-• 设计并实现 **Hybrid Search 混合检索引擎**：Dense语义检索(Cosine Similarity) + Sparse关键词检索(BM25) 双路并行召回，通过RRF融合算法平衡查准率与查全率；精排层支持Cross-Encoder / LLM Rerank / None三种模式可插拔切换，Rerank失败时自动Fallback至融合排名保障可用性
-• 基于 **MCP(Model Context Protocol)** 标准实现知识检索Server，暴露 query_knowledge_hub / list_collections / get_document_summary 三个Tool，支持Claude Desktop等AI Agent通过Tool Calling直接调用私有知识库，返回结构化Citation引用
-• 设计 **全链路可插拔架构**：为LLM / Embedding / Splitter / VectorStore / Reranker / Evaluator六大组件定义统一抽象接口，基于工厂模式 + YAML配置驱动实现"改配置不改代码"的组件切换；支持Azure OpenAI / OpenAI / DeepSeek / Ollama四种LLM Provider与Chroma / Qdrant向量数据库动态切换
-• 构建 **会话级知识库隔离机制**：每个对话拥有独立Chroma Collection，RAG检索严格限定在当前会话文档范围；设计滑动窗口记忆压缩 + LTM长期记忆存储，基于LangGraph Checkpoint + MySQL双轨制自动压缩历史消息，支持跨会话知识沉淀与召回
-• 实现 **五阶段智能数据摄取流水线**：Load → Split → Transform → Embed → Upsert；Transform阶段包含ChunkRefiner（LLM智能重组去噪）、MetadataEnricher（自动生成Title/Summary/Tags语义元数据）、ImageCaptioner（Vision LLM生成图片描述实现"搜文出图"）；基于SHA256文件哈希 + 内容哈希实现增量摄取与幂等Upsert
-• 实现 **查询优化模块**：结构化LLM一次完成指代消解(Coreference Resolution) + 子查询拆分(Query Decomposition)，解决复杂多跳问题；Query Analysis Benchmark 5个测试cases（代词消解、并列拆分、无历史上下文等）全部通过
-• 构建 **全链路可观测性体系**：设计Ingestion Trace（10阶段）+ Query Trace（5阶段）双链路追踪，基于Streamlit搭建六页面可视化管理平台（系统总览、数据浏览器、摄取管理、追踪分析、评估面板），支持精准定位坏Case
-• 建立 **自动化评估与测试体系**：集成Ragas评估框架（Faithfulness / Answer Relevancy / Context Precision）+ 自定义指标（Hit Rate / MRR）；基于MS MARCO黄金测试集进行消融实验，对比Dense-only / Sparse-only / Hybrid / Hybrid+Rerank四种策略；累计编写60+测试用例覆盖单元/集成/E2E三层
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| **检索模块 Hit Rate** | **97%** | MS MARCO数据集，Hybrid + Rerank |
+| **检索模块 MRR** | **95.75%** | Hybrid + Cross-Encoder Rerank |
+| **查询分析准确率** | **100%** | 指代消解+子查询拆分，5/5 cases通过 |
+| **Ingestion Pipeline完整性** | **100%** | 10个stage trace零缺失 |
+| **测试覆盖** | **60+** | 50+单元测试 + 10+集成测试 + E2E测试 |
 
-**结果**：检索模块在MS MARCO数据集上Hit Rate@10达97%、MRR达95.75%，较纯BM25（Hit Rate 83%）提升14个百分点；Query Analysis 5/5 cases通过；Ingestion Pipeline Trace 10个stage完整性100%；系统支持4种LLM Provider与2种向量数据库无缝切换。
+#### 系统架构
+```
+┌─────────────┐     SSE流式      ┌──────────────┐     LangGraph      ┌─────────────────┐
+│  Vue3前端   │ ◄──────────────► │  FastAPI     │ ────────────────► │  RAG Pipeline   │
+│  聊天界面   │                  │  REST API    │    状态机编排      │  Retrieve→Rerank│
+└─────────────┘                  └──────┬───────┘                   │  →Generate      │
+                                        │                          └─────────────────┘
+                                MCP协议 │
+                                stdio   │    ┌──────────────────────────────────────┐
+                                        └──► │  MCP Server (3 Tools)                │
+                                             │  · query_knowledge_hub               │
+                                             │  · list_collections                  │
+                                             │  · get_document_summary              │
+                                             └──────────────────────────────────────┘
+```
 
-**技术栈**：Python, FastAPI, LangGraph, LangChain, Chroma, Qdrant, PostgreSQL, MySQL, SQLite, MCP, Vue 3, Streamlit, Ragas
+#### 核心职责与成果
+
+**1. 设计并实现端到端RAG Pipeline（检索增强生成）**
+- 基于 **LangGraph 状态机**编排 RAG 完整链路：**Dense向量检索 → Rerank重排序 → LLM生成**
+- 实现 **Hybrid Search混合检索**：语义检索(Dense Embedding) + 关键词检索(BM25稀疏索引) + RRF融合排序
+- **消融实验验证**：在MS MARCO数据集上对比4种检索策略，Hybrid + Cross-Encoder Rerank 达到 **Hit Rate 97% / MRR 95.75%**，较纯BM25（Hit Rate 83%）提升14个百分点
+- 支持 Chroma/Qdrant 多向量数据库动态切换，检索层可插拔架构
+
+**2. 会话级知识库与记忆管理**
+- 每个对话拥有独立Chroma Collection，RAG检索严格限定在当前会话文档范围，实现**会话级数据隔离**
+- 设计**滑动窗口记忆压缩** + **LTM长期记忆存储**：LangGraph Checkpoint + MySQL双轨制，自动压缩历史消息，支持跨会话知识沉淀与召回
+
+**3. 实现MCP(Model Context Protocol)协议接入**
+- 独立开发 **stdio-based MCP Server**，暴露3个核心Tool：query / list / get_document_summary
+- RAG能力可被 **Claude Desktop、Cursor** 等MCP客户端**原生调用**，实现LLM与知识库的Function Calling闭环
+
+**4. 构建文件摄取与向量化Pipeline**
+- 6阶段同步Pipeline：PDF/TXT/MD/CSV解析 → 智能分块(Chunking) → LLM Refine/Enrich/Caption → 向量化入库
+- 后台异步任务处理，前端轮询实时观测状态流转
+- **Ingestion Trace 100%完整**：10个处理阶段（load→split→chunk_refiner→llm_enrich→metadata_enricher→transform→batch→embed→upsert）全部可观测
+
+**5. 查询优化**
+- 结构化LLM一次完成 **指代消解(Coreference Resolution)** + **子查询拆分(Query Decomposition)**
+- **Query Analysis Benchmark**：5个测试cases（代词消解、并列拆分、无历史上下文等）全部通过
+- 支持 **OpenAI / Azure / DeepSeek / Ollama** 多LLM Provider动态切换
+
+**6. 可观测性与评估体系**
+- Pipeline Trace 瀑布流记录每个RAG步骤的耗时与中间状态
+- Streamlit Dashboard 实时可视化检索质量与性能指标
+- 集成 **Ragas评估框架**，支持基于黄金测试集自动化评估
+- 设计**消融实验(Ablation Study)**对比Dense-only / Sparse-only / Hybrid / Hybrid+Rerank 4种策略
+
+**7. 工程化与测试体系**
+- 构建 **3层测试体系**：**50+ 单元测试** + **10+ 集成测试** + **E2E端到端测试**
+- golden_test_set 黄金测试集（MS MARCO）持续回归，确保检索模块迭代不退化
+- 模块化分层架构：Ingestion / Retrieval / Generation / Observability 各层解耦
 
 ---
 
-### 项目二：智能深度研究Agent系统（LangResearch）| 个人项目
+### 项目二：LangResearch — 基于LangGraph的Multi-Agent智能深度研究系统（个人项目）
 
-**背景**：针对通用大模型在深度研究任务中存在的信息检索片面、报告质量不稳定、用户意图理解偏差等问题，设计基于LangGraph的自主研究Agent。
+> **项目定位**：对标 GPT Researcher 的深度研究Agent，采用 **Multi-Agent协作架构** 实现自主调研与报告生成  
+> **技术栈**：Python · **LangGraph** · **LangChain** · Tavily Search · OpenAI API  
+> **GitHub**：[你的仓库链接]
 
-**目标**：构建支持Multi-Agent协作的自主研究系统，实现需求澄清、任务分解、并行调研、报告生成与质量校验的完整闭环，提升研究报告的完整性与准确性。
+#### Multi-Agent系统架构
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Multi-Agent 深度研究系统                              │
+│                                                                             │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────────┐ │
+│  │ Clarify    │──►│   Plan      │──►│  Router     │──►│ Synthesize      │ │
+│  │ Agent      │   │  Agent      │   │  Agent      │   │  Agent          │ │
+│  │ (HITL)     │   │(Task Planning│   │(调度分发)   │   │ (综合汇总)      │ │
+│  └─────────────┘   └─────────────┘   └──────┬──────┘   └─────────────────┘ │
+│                                             │                               │
+│                              Send并行Fan-out │                               │
+│                    ┌────────────────────────┼────────────────────────┐      │
+│                    ▼                        ▼                        ▼      │
+│           ┌───────────────┐       ┌───────────────┐       ┌───────────────┐│
+│           │ Research      │       │ Research      │       │ Research      ││
+│           │ Sub-Agent #1  │       │ Sub-Agent #2  │       │ Sub-Agent #3  ││
+│           │ search→think  │       │ search→think  │       │ search→think  ││
+│           │ →finalize     │       │ →finalize     │       │ →finalize     ││
+│           └───────┬───────┘       └───────┬───────┘       └───────┬───────┘│
+│                   └────────────────────────┼────────────────────────┘      │
+│                                            │ operator.add合并              │
+│                                            ▼                               │
+│                                   ┌─────────────────┐                      │
+│                                   │  Report Agent   │                      │
+│                                   │(Evaluator-      │                      │
+│                                   │ Optimizer模式)  │                      │
+│                                   │ Draft→Eval→    │                      │
+│                                   │ Rewrite×2       │                      │
+│                                   └────────┬────────┘                      │
+│                                            │                               │
+│                                            ▼                               │
+│                                   ┌─────────────────┐                      │
+│                                   │  Verify Agent   │                      │
+│                                   │ (质量校验)       │                      │
+│                                   └─────────────────┘                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-**过程**：
-• 设计 **Multi-Agent协作架构**：主图负责任务调度（Clarify → Plan → Router → Synthesize），嵌套子图(ResearchLoop)负责单任务ReAct推理循环（search → think → finalize）；通过LangGraph的Send机制实现并行Fan-out，最多3个Research Sub-Agent并发执行，最多2轮委托迭代
-• 实现 **HITL人机协同机制**：设计置信度阈值策略，当调度Agent对用户query意图置信度 < 0.65时自动触发interrupt()中断，引导用户提供澄清信息（时间范围、关注维度、输出格式），最多2轮交互后恢复执行进入正式研究阶段
-• 实现 **Evaluator-Optimizer报告质量优化模式**：报告生成采用Draft → Evaluate → Rewrite闭环，最多2轮自动迭代；Evaluate从完整性、准确性、引用规范性、逻辑连贯性四个维度评估，根据反馈自动重写；Verify节点规则化校验token覆盖率、引用来源、inline citation完整性
-• 设计 **预算控制与系统容错机制**：每线程硬限制最多2次Tavily搜索调用，防止资源滥用；当LLM输出格式异常或超时时自动降级至规则-based处理，确保系统不崩溃；单个子任务失败不影响整体流程，具备错误隔离与状态恢复能力
-• 实现 **并发安全的状态管理**：使用Annotated[list[Finding], operator.add]自定义reducer实现并行研究分支的安全合并；Finding结构体标准化(subtask / summary / sources / reflections)确保多源信息可综合；基于LangGraph持久化机制支持断点续传与状态回溯
+#### 核心职责与成果
 
-**结果**：系统覆盖8阶段完整研究闭环（Clarify→Plan→Save→Router→Research→Synthesize→Report→Verify）；支持最多3个Sub-Agent并发执行与2轮委托迭代；HITL机制最多2轮交互澄清用户意图；Evaluator-Optimizer模式最多2轮自动优化报告质量，显著提升输出稳定性与准确性。
+**1. 设计Multi-Agent协作系统（主图+嵌套子图架构）**
+- **调度Agent（主图）**：负责任务规划(Task Planning)、子任务路由分发、结果综合汇总(Synthesize)
+- **研究Agent（嵌套子图）**：每个子任务由独立的Research Sub-Agent执行，内部运行 `search → think → finalize` 的**ReAct推理循环**
+- 通过 **Send机制实现并行Fan-out**，最多3个Research Agent并发执行，最多2轮委托迭代
+- 各Agent通过标准化 `Finding` 结构体(subtask/summary/sources/reflections)通信，实现**多Agent信息融合**
 
-**技术栈**：Python, LangGraph, LangChain, Tavily Search, OpenAI API
+**2. 实现HITL人机协同节点（Human-in-the-Loop）**
+- 设计**置信度阈值机制**：当调度Agent对用户query意图置信度 `< 0.65` 时，自动触发 `interrupt()` 中断
+- 引导用户提供澄清信息（时间范围、关注维度、输出格式），最多2轮HITL交互后进入正式研究阶段
+- 解决模糊Query导致的研究方向偏差问题，提升最终报告的**相关性与准确性**
+
+**3. 实现Evaluator-Optimizer质量优化模式**
+- 报告生成采用 **Draft → Evaluate → Rewrite** 闭环优化，最多2轮自动迭代
+- Evaluate维度：完整性、准确性、引用规范性、逻辑连贯性
+- 根据评估反馈自动重写，显著提升报告质量，避免LLM"幻觉"输出
+- **Verify Agent**：规则化校验清单，确保token覆盖率、引用来源、inline citation完整性
+
+**4. 设计ReAct推理循环（Research Sub-Agent内部）**
+- 每个Research Agent内部实现 **ReAct(Reasoning + Acting)** 模式：
+  - **Reason**：LLM分析当前已收集信息，判断是否需要继续搜索
+  - **Act**：调用Tavily Search工具执行搜索，获取新信息
+  - **Observation**：整合新信息到已有知识，更新研究状态
+- 支持**工具调用(Tool Use)**，可扩展接入Arxiv、本地文档、搜索引擎等多源检索
+
+**5. 预算控制与系统鲁棒性**
+- **搜索预算硬控制**：每线程最多2次Tavily搜索调用，防止资源滥用与成本失控
+- **启发式Fallback降级**：当LLM输出格式异常或超时时，自动降级到规则-based处理，确保系统不崩溃
+- 所有Agent节点具备错误隔离与状态恢复能力，单个子任务失败不影响整体研究流程
+
+**6. 状态管理与并发安全**
+- 使用 `Annotated[list[Finding], operator.add]` 自定义reducer，实现并行研究分支的**安全合并**
+- 基于LangGraph的持久化机制，支持研究流程的**断点续传**与**状态回溯**
 
 ---
 
 ## 两个项目的关系
 
-| 维度 | RAG-Pro（项目一） | LangResearch（项目二） |
-|------|------------------|----------------------|
-| **核心能力** | 强检索 + 工程完整 | 强架构 + Agent设计 |
-| **Agent形态** | LangGraph状态机编排RAG Pipeline | **真正的Multi-Agent系统**（调度+研究+报告+校验） |
-| **检索深度** | Hybrid Search + Rerank，Hit Rate 97% | 仅Tavily单源，检索能力弱 |
-| **前端** | Vue 3完整聊天界面 + Streamlit Dashboard | CLI/API调用 |
-| **互补价值** | 可为LangResearch提供**多源检索+知识库**能力 | 可为RAG-Pro提供**主动研究+报告生成**能力 |
+| 维度 | RAG-Pro | LangResearch |
+|------|---------|-------------|
+| **定位** | 被动检索系统（用户问，系统答） | 主动研究系统（自主调研，生成报告） |
+| **Agent形态** | LangGraph状态机编排RAG Pipeline | **真正的Multi-Agent系统**（调度Agent+研究Agent+报告Agent+校验Agent） |
+| **检索能力** | 强（Hybrid Search + Rerank） | 弱（仅Tavily单源） |
+| **协作能力** | 无 | **多Agent并行协作** |
+| **记忆机制** | 会话级隔离 + LTM长期记忆 | 基础session记忆 |
+| **前端** | Vue 3完整聊天界面 | 无（CLI/API调用） |
+| **互补性** | RAG-Pro可为LangResearch提供**多源检索能力** | LangResearch可为RAG-Pro提供**主动研究+报告生成能力** |
+
+---
+
+## 开源贡献与社区
+
+- **GitHub**：[你的GitHub主页]，维护2个AI Agent相关开源项目
+- **技术方向**：LangGraph Multi-Agent架构 · RAG系统 · MCP协议
+- 活跃于LangChain/LangGraph社区，关注Multi-Agent System最新进展
 
 ---
 
@@ -96,13 +222,26 @@
 
 ---
 
-## 面试追问预测
+## 自我评价
 
-1. **Hybrid Search的RRF融合**：BM25和Dense检索在RRF中的k参数选多少？为什么不用线性加权？Rerank失败后Fallback到融合排名的策略是什么？
-2. **MCP协议设计**：为什么选择stdio-based而不是HTTP-based？Tool的Schema怎么定义？Claude Desktop如何发现你的Tool？
-3. **可插拔架构的边界**：新增一个LLM Provider需要实现哪几个方法？工厂模式在运行时切换和启动时切换的区别？
-4. **记忆管理机制**：滑动窗口压缩的触发条件是什么？LTM长期记忆怎么存储和召回？Checkpoint用PostgreSQL还是SQLite？
-5. **Ingestion Pipeline幂等性**：chunk_id = hash(source_path + section_path + content_hash)的具体设计动机？增量摄取怎么判断文件是否已处理？
-6. **Multi-Agent状态传递**：主图和嵌套子图之间Send的时候，ResearchState和ResearchLoopState怎么映射？并行分支合并时operator.add怎么避免重复？
-7. **Evaluator-Optimizer的评估维度**：4个维度各自的权重？Rewrite后质量没有提升怎么办？怎么防止无限循环？
-8. **HITL中断恢复**：LangGraph的interrupt/resume在代码层怎么实现？如果用户长时间不响应，thread状态会过期吗？
+> **一句话定位**：具备 **RAG全链路工程化** + **Multi-Agent系统架构设计** 双重能力的AI Agent开发工程师
+
+1. **RAG检索增强生成全链路能力**：从文档摄取(Ingestion)、混合检索(Hybrid Search)、重排序(Rerank)到生成的完整Pipeline均有生产级落地经验。基于LangGraph状态机编排RAG工作流，MS MARCO数据集验证检索模块 **Hybrid + Rerank达到97% Hit Rate / 95.75% MRR**，较纯BM25提升14个百分点。
+
+2. **Multi-Agent系统架构能力**：基于LangGraph设计并落地 **Multi-Agent协作系统**（调度Agent + 研究Agent + 报告Agent + 校验Agent多角色分工），实践 **ReAct · CoT · Task Planning · Tool Use · HITL · Evaluator-Optimizer** 等Agent核心设计模式。
+
+3. **两个项目的互补性**：RAG-Pro（强检索 + 工程完整）+ LangResearch（强架构 + Multi-Agent），两者结合可构建**既能深度检索又能自主研究**的完整Agent系统。
+
+4. **大模型工程化与协议集成**：熟悉 **MCP协议**、Function Calling、Prompt Engineering，能将LLM能力通过标准化协议接入外部系统。
+
+5. **数据驱动的工程素养**：注重**可观测性**与**量化评估**，构建消融实验对比不同检索策略，基于黄金测试集与60+测试用例持续优化系统性能。
+
+---
+
+> **面试准备重点**：
+> 1. **RAG-Pro vs LangResearch的区别**：前者是RAG Pipeline状态机编排，后者是Multi-Agent协作系统，两者如何互补？
+> 2. **消融实验**：Dense-only(98%/3.6s) vs Sparse-only(83%/32ms) vs Hybrid+Rerank(97%/9.4s)，为什么选这个 trade-off？
+> 3. **Multi-Agent协作**：Send并行Fan-out的实现？子图与主图的状态传递？
+> 4. **Evaluator-Optimizer**：评估维度？Rewrite触发条件？与单轮生成的优劣对比？
+> 5. **HITL**：LangGraph interrupt/resume机制？thread_id在状态恢复中的作用？
+> 6. **MCP协议**：stdio-based的设计动机？Tool Schema定义？客户端发现机制？

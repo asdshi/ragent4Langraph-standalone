@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS conversation_files (
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP NOT NULL,
     error_message TEXT,
+    file_type VARCHAR(32),
     extract_method VARCHAR(32),
     page_count INTEGER,
     word_count INTEGER,

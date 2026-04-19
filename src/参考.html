@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+
+<html class="light" lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary": "#1A237E",
+                        "on-primary": "#FFFFFF",
+                        "background": "#F8F9FA",
+                        "surface": "#FFFFFF",
+                        "outline": "#E0E0E0",
+                        "surface-variant": "#F1F3F4",
+                        "secondary": "#3F51B5"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.5rem",
+                        "lg": "0.75rem",
+                        "xl": "1rem",
+                        "full": "9999px"
+                    },
+                    "fontFamily": {
+                        "headline": ["Manrope", "sans-serif"],
+                        "body": ["Inter", "PingFang SC", "Source Han Sans", "sans-serif"]
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        body {
+            font-family: 'Inter', 'PingFang SC', sans-serif;
+        }
+
+        .glass-panel {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #E0E0E0;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #BDBDBD;
+        }
+    </style>
+</head>
+
+<body class="bg-background text-slate-900 overflow-hidden">
+    <!-- Left Sidebar -->
+    <aside
+        class="fixed left-0 top-0 h-full w-64 flex flex-col p-6 z-40 bg-white border-r border-outline font-['Manrope'] shadow-sm">
+        <div class="mb-10 flex items-center gap-3">
+            <div
+                class="w-10 h-10 bg-primary rounded-lg flex items-center justify-center text-white text-lg font-bold shadow-lg shadow-primary/20">
+                <span class="material-symbols-outlined">hub</span>
+            </div>
+            <div>
+                <div class="text-lg font-extrabold tracking-tight text-primary">RAG Agent</div>
+                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Intelligent Copilot</div>
+            </div>
+        </div>
+        <nav class="flex-1 space-y-2">
+            <button
+                class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white font-bold rounded-xl transition-all hover:opacity-90 active:scale-95 shadow-md shadow-primary/10">
+                <span class="material-symbols-outlined text-lg">add</span>
+                <span>新建对话</span>
+            </button>
+            <div class="pt-6 pb-2">
+                <button
+                    class="w-full flex items-center justify-between px-3 py-2 text-slate-500 hover:text-primary transition-colors group">
+                    <div class="flex items-center gap-3">
+                        <span class="material-symbols-outlined text-xl">history</span>
+                        <span class="text-sm font-semibold">历史对话</span>
+                    </div>
+                    <span
+                        class="material-symbols-outlined text-lg opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
+                </button>
+            </div>
+            <div class="pt-2">
+                <div class="flex items-center gap-3 px-3 py-2 text-slate-500 mb-2">
+                    <span class="material-symbols-outlined text-xl">folder_open</span>
+                    <span class="text-sm font-semibold">知识库文件</span>
+                </div>
+                <div
+                    class="mt-4 p-4 border-2 border-dashed border-outline rounded-xl bg-slate-50/50 flex flex-col items-center justify-center text-center group hover:border-primary/40 transition-colors cursor-pointer">
+                    <span
+                        class="material-symbols-outlined text-slate-400 mb-2 text-3xl group-hover:text-primary transition-colors">cloud_upload</span>
+                    <p class="text-[11px] text-slate-500 leading-tight">拖拽或点击上传文件</p>
+                    <p class="text-[9px] text-slate-400 mt-1">支持PDF, Word, Excel, PPT等</p>
+                </div>
+                <div
+                    class="mt-4 p-4 rounded-xl border border-outline flex flex-col items-center justify-center gap-2 text-slate-400 hover:bg-slate-50 transition-colors cursor-pointer">
+                    <span class="material-symbols-outlined text-2xl">account_tree</span>
+                    <span class="text-[11px] font-medium">知识库管理</span>
+                </div>
+            </div>
+        </nav>
+        <div class="mt-auto pt-4 flex flex-col gap-1 border-t border-outline">
+            <div class="flex items-center gap-2 px-3 py-2">
+                <span class="text-[10px] font-bold text-slate-300 uppercase">API 地址:</span>
+                <span class="text-[10px] font-mono text-primary/60">/api/v1</span>
+            </div>
+        </div>
+    </aside>
+    <!-- Main Chat Area -->
+    <main class="ml-64 mr-[320px] h-screen flex flex-col bg-slate-50/30 relative">
+        <!-- Top Bar -->
+        <header
+            class="h-16 flex items-center justify-between px-8 border-b border-outline bg-white/80 backdrop-blur-md sticky top-0 z-30">
+            <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-primary/40">chat_bubble</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-bold text-slate-700">当前对话</span>
+                    <span
+                        class="px-2 py-0.5 bg-slate-100 text-[10px] font-mono text-slate-500 rounded border border-outline">conv_3aa4f8dbf67...</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="p-2 text-slate-400 hover:text-primary transition-colors"><span
+                        class="material-symbols-outlined">grid_view</span></button>
+                <button class="p-2 text-slate-400 hover:text-primary transition-colors"><span
+                        class="material-symbols-outlined">settings</span></button>
+            </div>
+        </header>
+        <!-- Chat Thread -->
+        <div class="flex-1 overflow-y-auto px-12 py-10 space-y-10">
+            <!-- User Message -->
+            <div class="flex flex-col items-end gap-2 max-w-2xl ml-auto">
+                <div class="flex items-center gap-3 mb-1">
+                    <span class="text-[10px] text-slate-400 font-mono">21:27</span>
+                    <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
+                        <span class="material-symbols-outlined text-sm text-slate-600">person</span>
+                    </div>
+                </div>
+                <div
+                    class="bg-white border border-outline p-4 rounded-2xl rounded-tr-none shadow-sm text-sm text-slate-800 leading-relaxed font-body">
+                    dsad a
+                </div>
+            </div>
+            <!-- AI Response -->
+            <div class="flex flex-col items-start gap-2 max-w-3xl mr-auto">
+                <div class="flex items-center gap-3 mb-1">
+                    <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                        <span class="material-symbols-outlined text-sm text-primary">smart_toy</span>
+                    </div>
+                    <span class="text-[10px] text-slate-400 font-mono">21:27</span>
+                </div>
+                <div class="bg-white border border-outline p-6 rounded-2xl rounded-tl-none shadow-sm space-y-4">
+                    <p class="text-sm text-slate-700 leading-relaxed font-body">
+                        您好！根据检索结果，在当前的知识库中未找到关于“dsada”的任何相关文档或信息。</p>
+                    <div class="space-y-3">
+                        <p class="text-sm font-bold text-slate-800">这可能有以下几种情况：</p>
+                        <ul class="text-sm text-slate-600 space-y-2 list-decimal list-inside leading-relaxed pl-2">
+                            <li>拼写错误：您是否想查询其他关键词？（例如：可能是某个技术术语、人名、项目名或英文单词的误拼）</li>
+                            <li>内容未入库：该信息可能尚未被发布到企业知识库中。</li>
+                            <li>上下文缺失：如果这是之前的对话提到的内容，可能需要重新确认具体业务场景。</li>
+                        </ul>
+                    </div>
+                    <p class="text-sm text-primary font-medium italic pt-2">如果您能提供更多背景信息或修正关键词，我将很乐意为您提供更准确的帮助！</p>
+                </div>
+            </div>
+        </div>
+        <!-- Input Area -->
+        <div class="px-12 pb-8 bg-gradient-to-t from-slate-50 to-transparent">
+            <div
+                class="relative bg-white rounded-2xl shadow-xl border border-outline p-4 flex items-center gap-4 transition-all focus-within:ring-2 focus-within:ring-primary/20">
+                <textarea
+                    class="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 resize-none h-12 font-body placeholder:text-slate-400"
+                    placeholder="输入内容... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
+                <button
+                    class="w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all">
+                    <span class="material-symbols-outlined text-xl"
+                        style="font-variation-settings: 'FILL' 1;">send</span>
+                </button>
+            </div>
+            <div class="flex items-center justify-center gap-4 mt-4 opacity-40">
+                <div class="flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[10px]">shield_check</span>
+                    <span class="text-[10px] font-bold">AI生成内容仅供参考</span>
+                </div>
+                <div class="w-1 h-1 bg-slate-300 rounded-full"></div>
+                <span class="text-[10px] font-bold">现代智库系统</span>
+            </div>
+        </div>
+    </main>
+    <!-- Right Tracking Panel -->
+    <aside class="fixed right-0 top-0 h-full w-[320px] bg-[#111827] text-white p-8 z-40 flex flex-col font-['Manrope']">
+        <div class="flex items-center gap-3 mb-10 border-b border-white/10 pb-6">
+            <span class="material-symbols-outlined text-white/50 text-xl">insights</span>
+            <h2 class="text-sm font-extrabold uppercase tracking-widest text-white/90">LangGraph 实时追踪</h2>
+        </div>
+        <!-- Tracking Steps -->
+        <div class="flex-1 space-y-0 relative">
+            <!-- Vertical Timeline Line -->
+            <div class="absolute left-[9px] top-2 bottom-6 w-[1px] bg-white/10"></div>
+            <!-- Step 1 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">会话初始化</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+            <!-- Step 2 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">意图解析</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+            <!-- Step 3 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">知识库检索</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+            <!-- Step 4 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">最终生成</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+            <!-- Step 5 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">记忆反馈</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+            <!-- Step 6 -->
+            <div class="relative pl-10 pb-10 group">
+                <div
+                    class="absolute left-0 top-1 w-5 h-5 rounded-full bg-white/20 border-2 border-[#111827] z-10 flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 bg-white/40 rounded-full"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-white/90 mb-1">归档存储</p>
+                    <p class="text-[10px] text-white/40 font-medium">等待中</p>
+                </div>
+            </div>
+        </div>
+        <!-- Footer of Sidebar -->
+        <div class="mt-auto pt-6 border-t border-white/5">
+            <button
+                class="w-full flex items-center justify-between text-[10px] font-bold text-white/40 hover:text-white transition-colors uppercase tracking-widest group">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-sm">terminal</span>
+                    <span>State Inspector</span>
+                </div>
+                <span
+                    class="material-symbols-outlined text-sm group-hover:translate-y-[-2px] transition-transform">expand_less</span>
+            </button>
+            <div
+                class="mt-4 bg-black/40 rounded-lg p-3 font-mono text-[10px] text-white/60 h-24 overflow-hidden border border-white/5">
+                {}
+            </div>
+        </div>
+    </aside>
+</body>
+
+</html>
