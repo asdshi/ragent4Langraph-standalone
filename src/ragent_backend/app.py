@@ -224,22 +224,6 @@ async def ingest_file_task(
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(
-        title="RAG Agent Backend", 
-        version="0.4.0",
-        description="支持会话级知识库的 RAG Agent（三分支意图路由 + 统一工具层）",
-        lifespan=lifespan,
-    )
-
-    # 添加 CORS 中间件
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # 允许所有来源
-        allow_credentials=True,
-        allow_methods=["*"],  # 允许所有方法
-        allow_headers=["*"],  # 允许所有头
-    )
-
     # 加载配置
     settings = load_settings()
 
@@ -281,7 +265,7 @@ def create_app() -> FastAPI:
         tool_registry=tool_registry,
     )
 
-    # lifespan：异步连接 MCP Servers
+    # lifespan：异步连接 MCP Servers（必须在 FastAPI 构造函数之前定义）
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # 启动时连接配置的 MCP Servers
@@ -314,6 +298,23 @@ def create_app() -> FastAPI:
         # 关闭时断开所有 MCP 连接
         await tool_registry.disconnect_all_mcp()
         print("[MCP] All MCP connections closed")
+
+    # 创建 FastAPI app
+    app = FastAPI(
+        title="RAG Agent Backend", 
+        version="0.4.0",
+        description="支持会话级知识库的 RAG Agent（三分支意图路由 + 统一工具层）",
+        lifespan=lifespan,
+    )
+
+    # 添加 CORS 中间件
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 允许所有来源
+        allow_credentials=True,
+        allow_methods=["*"],  # 允许所有方法
+        allow_headers=["*"],  # 允许所有头
+    )
 
     @app.get("/health")
     async def health() -> dict:

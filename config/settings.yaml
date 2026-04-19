@@ -108,6 +108,13 @@ ingestion:
 # MCP Client Configuration (External Tool Servers)
 # =============================================================================
 mcp_servers:
+  # 简易 MCP Server（纯 Python 内置工具）
+  simple:
+    transport: stdio
+    command: "python"
+    args: ["scripts/simple_mcp_server.py", "--stdio"]
+    timeout_seconds: 30
+
   # Example: Tavily Web Search MCP Server
   # tavily:
   #   transport: sse
