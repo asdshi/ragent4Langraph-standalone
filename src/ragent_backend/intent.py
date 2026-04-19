@@ -191,13 +191,26 @@ async def rewrite_query(query: str, messages: list, llm=None) -> str:
 # ============== 意图检测（三分支） ==============
 
 # 工具意图关键词映射（规则 fallback 用）
+# 工具名必须与 ToolRegistry 中注册的实际名称完全一致
 _TOOL_KEYWORDS: Dict[str, List[str]] = {
+    # 内置工具
     "query_knowledge_hub": ["文档", "文件", "知识库", "资料", "帮我找", "查询"],
     "list_collections": ["集合", "collection", "有哪些文件"],
-    "tavily_search": ["搜索", "网上", "网页", "google", "百度", "bing", "查一下"],
-    "weather": ["天气", "气温", "降水", " forecast"],
-    "calculator": ["计算", "等于", "+" "-" "*" "/", "公式"],
+    "get_document_summary": ["摘要", "总结", "文档详情", "doc_id"],
+    # MCP 外部工具（simple.* 前缀必须与注册时一致）
+    "simple.web_search": ["搜索", "网上", "网页", "google", "百度", "bing", "查一下", "查查", "搜一下"],
+    "simple.calculator": ["计算", "等于", "公式", "算一下", "等于多少"],
+    "simple.get_current_time": ["时间", "现在几点", "日期", "当前时间"],
+    "simple.list_directory": ["目录", "文件夹", "文件列表", "ls"],
 }
+
+# 通用工具意图关键词（不绑定特定工具，只判断 intent_type="tool"）
+_TOOL_INTENT_KEYWORDS: List[str] = [
+    "搜索", "网上", "网页", "google", "百度", "bing", "查一下", "查查", "搜一下",
+    "计算", "等于", "公式", "算一下", "等于多少",
+    "时间", "现在几点", "日期",
+    "天气", "气温", "降水",
+]
 
 
 async def detect_intent(
@@ -245,7 +258,7 @@ async def detect_intent(
             print(f"[Intent] LLM-based detection failed: {e}, falling back to rule-based")
 
     # === Step 3: 规则 fallback ===
-    return _detect_intent_rule_based(rewritten_query)
+    return _detect_intent_rule_based(rewritten_query, available_tools or [])
 
 
 async def _detect_intent_with_llm(
@@ -277,10 +290,16 @@ async def _detect_intent_with_llm(
 
 用户查询：{rewritten_query}
 
-请输出结构化分类结果，包含 intent_type、confidence、reasoning 等字段。"""
+请输出结构化分类结果，包含 intent_type、confidence、reasoning 等字段。
+注意：target_tool 必须从可用工具列表中选择，不能编造不存在的工具名。"""
 
     structured_llm = llm.with_structured_output(IntentDetectionResult, method="json_mode")
     result: IntentDetectionResult = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+
+    # 验证 target_tool 是否存在于可用工具列表中
+    available_tool_names = {t.get("name", "") for t in available_tools}
+    if result.target_tool and result.target_tool not in available_tool_names:
+        result.target_tool = None  # 让子图自己选
 
     # 置信度阈值
     if result.confidence < 0.5:
@@ -304,12 +323,25 @@ async def _detect_intent_with_llm(
     )
 
 
-def _detect_intent_rule_based(rewritten_query: str) -> IntentResult:
-    """规则-based 意图分类（无 LLM 时的 fallback）。"""
+def _detect_intent_rule_based(
+    rewritten_query: str,
+    available_tools: List[Dict[str, Any]] = None,
+) -> IntentResult:
+    """规则-based 意图分类（无 LLM 时的 fallback）。
+    
+    策略：
+    1. 先匹配具体工具关键词，返回对应工具名
+    2. 再匹配通用工具意图关键词，返回 tool 但不指定具体工具（让子图自选）
+    3. 默认 rag
+    """
     query_lower = rewritten_query.lower()
+    available_tool_names = {t.get("name", "") for t in (available_tools or [])}
 
-    # 检查是否匹配工具关键词
+    # Step 1: 匹配具体工具关键词
     for tool_name, keywords in _TOOL_KEYWORDS.items():
+        # 只推荐实际存在的工具
+        if tool_name not in available_tool_names:
+            continue
         for kw in keywords:
             if kw.lower() in query_lower:
                 return IntentResult(
@@ -319,6 +351,17 @@ def _detect_intent_rule_based(rewritten_query: str) -> IntentResult:
                     target_tool=tool_name,
                     reasoning=f"关键词匹配工具 '{tool_name}': {kw}",
                 )
+
+    # Step 2: 通用工具意图（不指定具体工具，让子图自己选）
+    for kw in _TOOL_INTENT_KEYWORDS:
+        if kw.lower() in query_lower:
+            return IntentResult(
+                intent_type="tool",
+                rewritten_query=rewritten_query,
+                confidence=0.65,
+                target_tool=None,  # 子图自己选工具
+                reasoning=f"通用工具意图关键词: {kw}",
+            )
 
     # 默认 rag
     return IntentResult(
