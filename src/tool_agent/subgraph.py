@@ -60,12 +60,17 @@ def build_tool_subgraph(
         available_tools = state.get("available_tools", [])
         internal_messages = state.get("internal_messages", [])
         
-        # 初始化：第一轮需要构建系统提示
+        # 构建 messages（百炼 API 要求必须有 user 角色消息）
         if iteration == 0:
             system_prompt = _build_system_prompt(query, available_tools, target_tool)
-            messages = [SystemMessage(content=system_prompt)]
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"用户查询：{query}\n\n请根据上述查询和可用工具列表，做出工具调用决策。直接输出 JSON。"),
+            ]
         else:
+            # 非第一轮：已有工具执行结果，需要 user 消息触发 LLM 响应
             messages = list(internal_messages)
+            messages.append(HumanMessage(content="基于上述工具执行结果，请决定下一步行动（继续调用工具或结束）。直接输出 JSON。"))
         
         # LLM 结构化决策
         try:
