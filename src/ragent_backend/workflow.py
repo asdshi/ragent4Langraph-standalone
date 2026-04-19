@@ -25,6 +25,8 @@ from src.ragent_backend.store import ConversationArchiveStore
 from src.ragent_backend.intent import detect_intent, analyze_query
 from src.ragent_backend.ltm_store import LTMStore
 from src.mcp_server.tools.query_knowledge_hub import QueryKnowledgeHubTool
+from src.tool_agent.tool_registry import ToolRegistry, get_default_registry
+from src.tool_agent.subgraph import build_tool_subgraph
 
 
 class RAGWorkflow:
@@ -49,6 +51,7 @@ class RAGWorkflow:
         max_messages: int = 20,
         keep_recent: int = 4,
         ltm_store: Optional[LTMStore] = None,
+        tool_registry: Optional[ToolRegistry] = None,
     ) -> None:
         self._store = store
         self._llm = llm
@@ -62,19 +65,31 @@ class RAGWorkflow:
         )
         # 初始化 RAG 检索工具
         self._retrieval_tool = QueryKnowledgeHubTool()
+        # 工具注册表（可外部传入，或使用默认全局实例）
+        self._tool_registry = tool_registry or get_default_registry()
         self._compiled = self._build_graph()
 
     def _build_graph(self):
-        """构建工作流图"""
+        """构建工作流图（三分支：clarify / rag / tool）"""
         graph = StateGraph(RAGState)
 
-        # 添加节点
+        # 添加主图节点
         graph.add_node("session", self._session_node)
         graph.add_node("intent", self._intent_node)
+        graph.add_node("clarify", self._clarify_node)
         graph.add_node("retrieve", self._retrieve_node)
         graph.add_node("generate", self._generate_node)
         graph.add_node("memory_manage", self._memory_manage_node)
         graph.add_node("archive", self._archive_node)
+
+        # 添加工具子图节点（子图编译后作为一个节点）
+        if self._llm is not None:
+            tool_subgraph = build_tool_subgraph(
+                tool_registry=self._tool_registry,
+                llm=self._llm,
+                max_iterations=5,
+            )
+            graph.add_node("tool_subgraph", tool_subgraph)
 
         # 添加边
         graph.add_edge(START, "session")
@@ -82,19 +97,27 @@ class RAGWorkflow:
         graph.add_conditional_edges(
             "intent",
             self._route_after_intent,
-            {"retrieve": "retrieve", "archive": "archive"}
+            {"clarify": "clarify", "retrieve": "retrieve", "tool_subgraph": "tool_subgraph"}
         )
+        # 分支路由：rag/tool 需要 generate，clarify 直接跳过
         graph.add_edge("retrieve", "generate")
+        if self._llm is not None:
+            graph.add_edge("tool_subgraph", "generate")
         graph.add_edge("generate", "memory_manage")
+        # clarify 直接到 memory_manage（跳过 generate，避免重复生成）
+        graph.add_edge("clarify", "memory_manage")
         graph.add_edge("memory_manage", "archive")
         graph.add_edge("archive", END)
 
         return graph.compile(checkpointer=self._checkpointer)
 
     def _route_after_intent(self, state: RAGState) -> str:
-        """根据意图判断结果决定下一步走向"""
-        if state.get("need_clarify"):
-            return "archive"
+        """根据意图判断结果决定下一步走向（三分支）"""
+        intent_type = state.get("intent_type", "rag")
+        if intent_type == "clarify" or state.get("need_clarify"):
+            return "clarify"
+        if intent_type == "tool":
+            return "tool_subgraph"
         return "retrieve"
 
     def _emit_trace(
@@ -277,7 +300,7 @@ class RAGWorkflow:
         return state
 
     async def _intent_node(self, state: RAGState) -> Any:
-        """意图识别节点：结构化 LLM 一次完成指代消解 + 子查询拆分"""
+        """意图识别节点：结构化 LLM 一次完成指代消解 + 子查询拆分 + 三分类"""
         self._emit_trace("intent", "node_start", "running")
         
         query = state["query"]
@@ -298,15 +321,30 @@ class RAGWorkflow:
             rewritten_query = query
             sub_queries = [query]
         
-        # 意图识别（基于重写后的查询）
+        # 意图识别（三分支：clarify / rag / tool）
         self._emit_trace("intent", "intent_detect", "running")
-        intent = detect_intent(rewritten_query)
+        # 从注册表获取可用工具 schema，供 LLM 判断 tool 意图
+        available_tools = self._tool_registry.to_openai_tools() if self._tool_registry else []
+        intent = await detect_intent(
+            rewritten_query=rewritten_query,
+            llm=self._llm,
+            available_tools=available_tools,
+        )
         self._emit_trace("intent", "intent_detect", "success", {
+            "intent_type": intent.intent_type,
             "confidence": intent.confidence,
             "need_clarify": intent.need_clarify,
+            "target_tool": intent.target_tool,
         })
-        # 如果 LLM 说需要澄清，以 detect_intent 的结果为准做二次确认
-        if intent.need_clarify:
+        
+        # 如果 intent_type=tool，以 detect_intent 的结果为准（可能覆盖 analyze_query 的 sub_queries）
+        if intent.intent_type == "tool":
+            sub_queries = [intent.rewritten_query]
+            self._emit_trace("intent", "tool_intent", "running", {
+                "target_tool": intent.target_tool or "",
+                "reasoning": intent.reasoning or "",
+            })
+        elif intent.need_clarify:
             sub_queries = [intent.rewritten_query]
             self._emit_trace("intent", "clarify_shortcircuit", "running", {
                 "clarify_prompt": intent.clarify_prompt or "",
@@ -315,19 +353,24 @@ class RAGWorkflow:
         update = {
             "rewritten_query": rewritten_query,
             "sub_queries": sub_queries,
+            "intent_type": intent.intent_type,
             "intent_confidence": intent.confidence,
             "need_clarify": intent.need_clarify,
             "clarify_prompt": intent.clarify_prompt or "",
+            "available_tools": available_tools,
             "trace_events": [
                 *state.get("trace_events", []),
                 {
                     "node": "intent",
                     "ts": time.time(),
+                    "intent_type": intent.intent_type,
                     "confidence": intent.confidence,
                     "need_clarify": intent.need_clarify,
+                    "target_tool": intent.target_tool,
                     "sub_query_count": len(sub_queries),
                     "rewritten": rewritten_query != query,
                     "original_query": query,
+                    "reasoning": intent.reasoning,
                 }
             ],
         }
@@ -338,10 +381,29 @@ class RAGWorkflow:
             update["used_model"] = "intent-shortcircuit"
         
         self._emit_trace("intent", "node_end", "success", {
+            "intent_type": intent.intent_type,
             "need_clarify": intent.need_clarify,
             "sub_query_count": len(sub_queries),
         })
         return update
+
+    async def _clarify_node(self, state: RAGState) -> Dict[str, Any]:
+        """澄清节点：当意图为 clarify 时，生成澄清提示并准备进入 generate。"""
+        self._emit_trace("clarify", "node_start", "running")
+        
+        clarify_prompt = state.get("clarify_prompt", "请补充更多信息。")
+        
+        self._emit_trace("clarify", "node_end", "success", {
+            "clarify_prompt": clarify_prompt,
+        })
+        return {
+            "final_answer": clarify_prompt,
+            "used_model": "intent-clarify",
+            "trace_events": [
+                *state.get("trace_events", []),
+                {"node": "clarify", "ts": time.time(), "ok": True}
+            ],
+        }
 
     async def _retrieve_node(self, state: RAGState) -> Dict[str, Any]:
         """检索节点 - 接入真实的 RAG MCP 检索"""
@@ -451,7 +513,16 @@ class RAGWorkflow:
         # 格式化最近对话历史（仅用于展示，实际 history 通过 messages 传递）
         recent_history = self._format_recent_messages(state.get("messages", []))
         
-        prompt = ChatPromptTemplate.from_template("""你是企业级知识库助手，基于检索结果、对话历史和用户长期记忆回答用户问题。
+        # 判断是否有工具执行结果需要注入
+        tool_summary = state.get("tool_summary", "")
+        tool_section = ""
+        if tool_summary:
+            tool_section = f"""
+【工具执行结果】
+{tool_summary}
+"""
+        
+        prompt = ChatPromptTemplate.from_template("""你是企业级知识库助手，基于检索结果、工具执行结果、对话历史和用户长期记忆回答用户问题。
 
 【用户长期记忆】
 {memories}
@@ -461,7 +532,7 @@ class RAGWorkflow:
 
 【最近对话】
 {recent_history}
-
+{tool_section}
 【检索上下文】
 {context}
 
@@ -475,6 +546,7 @@ class RAGWorkflow:
             memories=memories_text,
             summary=state.get("summary", ""),
             recent_history=recent_history,
+            tool_section=tool_section,
             context=state.get("retrieval_context", ""),
             query=state.get("query", ""),
         )

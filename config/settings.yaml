@@ -103,3 +103,20 @@ ingestion:
   metadata_enricher:
     use_llm: true  # Set to true to enable LLM-based enrichment (requires LLM config)
     # When use_llm is false or LLM call fails, falls back to rule-based enrichment
+
+# =============================================================================
+# MCP Client Configuration (External Tool Servers)
+# =============================================================================
+mcp_servers:
+  # Example: Tavily Web Search MCP Server
+  # tavily:
+  #   transport: sse
+  #   url: "http://localhost:3000/sse"
+  #   timeout_seconds: 30
+  
+  # Example: Filesystem MCP Server
+  # filesystem:
+  #   transport: stdio
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  #   timeout_seconds: 30

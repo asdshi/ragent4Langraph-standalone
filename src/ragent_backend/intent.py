@@ -1,12 +1,23 @@
+"""
+意图识别模块 — 三分支路由（clarify / rag / tool）。
+
+核心改进：
+1. detect_intent() 支持 LLM-based 三分类，同时保留规则 fallback
+2. 工具意图通过 available_tools 列表让 LLM 自主判断
+3. 分类理由（reasoning）写入 trace_events，提升可观测性
+"""
+
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from src.ragent_backend.schemas import IntentResult
 
+
+# ============== 结构化 LLM 输出模型 ==============
 
 class QueryAnalysisResult(BaseModel):
     """LLM 结构化输出：查询重写 + 子查询拆分"""
@@ -17,6 +28,38 @@ class QueryAnalysisResult(BaseModel):
         description="如果查询包含多个并列主题，拆分为可独立执行的子查询列表；否则只放一个元素"
     )
 
+
+class IntentDetectionResult(BaseModel):
+    """LLM 结构化输出：意图三分类"""
+    intent_type: Literal["clarify", "rag", "tool"] = Field(
+        description="意图类型: clarify=需要澄清, rag=知识库检索, tool=需要调用外部工具"
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0,
+        description="分类置信度 (0-1)"
+    )
+    target_tool: Optional[str] = Field(
+        default=None,
+        description="当 intent_type=tool 时，指定最适合的工具名"
+    )
+    tool_args_preview: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="当 intent_type=tool 时，预解析的参数（可选）"
+    )
+    need_clarify: bool = Field(
+        default=False,
+        description="是否需要澄清"
+    )
+    clarify_prompt: Optional[str] = Field(
+        default=None,
+        description="当 need_clarify=True 时，给用户的澄清提示"
+    )
+    reasoning: str = Field(
+        description="分类理由（为什么是这个意图类型）"
+    )
+
+
+# ============== 查询分析 ==============
 
 async def analyze_query(query: str, messages: list, llm=None) -> QueryAnalysisResult:
     """
@@ -145,29 +188,148 @@ async def rewrite_query(query: str, messages: list, llm=None) -> str:
         return cleaned
 
 
-def detect_intent(rewritten_query: str) -> IntentResult:
+# ============== 意图检测（三分支） ==============
+
+# 工具意图关键词映射（规则 fallback 用）
+_TOOL_KEYWORDS: Dict[str, List[str]] = {
+    "query_knowledge_hub": ["文档", "文件", "知识库", "资料", "帮我找", "查询"],
+    "list_collections": ["集合", "collection", "有哪些文件"],
+    "tavily_search": ["搜索", "网上", "网页", "google", "百度", "bing", "查一下"],
+    "weather": ["天气", "气温", "降水", " forecast"],
+    "calculator": ["计算", "等于", "+" "-" "*" "/", "公式"],
+}
+
+
+async def detect_intent(
+    rewritten_query: str,
+    llm=None,
+    available_tools: Optional[List[Dict[str, Any]]] = None,
+) -> IntentResult:
     """
-    基于已重写后的查询做意图判断。
-    此时指代问题已被消除，只需做简单校验。
+    意图三分类：clarify / rag / tool。
+
+    策略：
+    1. 先检查是否需要澄清（保留现有规则）
+    2. 如果有 LLM，用结构化调用做三分类（推荐）
+    3. 无 LLM 时，回退到规则-based 分类
+
+    Args:
+        rewritten_query: 已重写（指代消解后）的查询
+        llm: 可选的 LLM 实例
+        available_tools: 可用工具列表（用于 LLM 判断 tool 意图）
+
+    Returns:
+        IntentResult
     """
+    # === Step 1: 澄清检查（硬规则，不经过 LLM）===
     vague_pronouns = ["它", "这个", "那个", "that", "it", "this", "上述", "上面"]
     has_vague = any(token in rewritten_query for token in vague_pronouns)
 
     if len(rewritten_query.strip()) < 4 or (has_vague and len(rewritten_query) < 10):
         return IntentResult(
+            intent_type="clarify",
             rewritten_query=rewritten_query,
             confidence=0.35,
             need_clarify=True,
             clarify_prompt="请补充更具体的信息，例如具体的产品名、文档名或业务指标。",
+            reasoning="查询过短或包含模糊代词，需要澄清",
+        )
+
+    # === Step 2: LLM-based 三分类 ===
+    if llm is not None:
+        try:
+            return await _detect_intent_with_llm(
+                rewritten_query, llm, available_tools or []
+            )
+        except Exception as e:
+            print(f"[Intent] LLM-based detection failed: {e}, falling back to rule-based")
+
+    # === Step 3: 规则 fallback ===
+    return _detect_intent_rule_based(rewritten_query)
+
+
+async def _detect_intent_with_llm(
+    rewritten_query: str,
+    llm,
+    available_tools: List[Dict[str, Any]],
+) -> IntentResult:
+    """使用 LLM 做结构化意图三分类。"""
+
+    # 构建工具描述
+    tools_text = ""
+    if available_tools:
+        tools_text = "\n".join([
+            f"- {t.get('name', 'unknown')}: {t.get('description', '无描述')[:80]}"
+            for t in available_tools
+        ])
+    else:
+        tools_text = "（当前无可用的外部工具）"
+
+    prompt = f"""你是意图分类专家。请根据用户查询和可用工具列表，判断用户的真实意图。
+
+分类规则：
+- "clarify": 查询模糊、不完整、需要用户补充信息才能回答
+- "rag": 查询涉及知识库、文档、内部资料等，可以通过检索回答
+- "tool": 查询明确需要调用外部工具（如搜索网页、查天气、计算等）
+
+可用工具列表：
+{tools_text}
+
+用户查询：{rewritten_query}
+
+请输出结构化分类结果，包含 intent_type、confidence、reasoning 等字段。"""
+
+    structured_llm = llm.with_structured_output(IntentDetectionResult, method="json_mode")
+    result: IntentDetectionResult = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+
+    # 置信度阈值
+    if result.confidence < 0.5:
+        # 低置信度，默认 rag
+        return IntentResult(
+            intent_type="rag",
+            rewritten_query=rewritten_query,
+            confidence=0.6,
+            reasoning=f"LLM 分类置信度过低({result.confidence:.2f})，默认回退到 rag",
         )
 
     return IntentResult(
+        intent_type=result.intent_type,
         rewritten_query=rewritten_query,
-        confidence=0.92,
-        need_clarify=False,
-        clarify_prompt=None,
+        confidence=result.confidence,
+        target_tool=result.target_tool,
+        tool_args=result.tool_args_preview,
+        need_clarify=result.need_clarify,
+        clarify_prompt=result.clarify_prompt,
+        reasoning=result.reasoning,
     )
 
+
+def _detect_intent_rule_based(rewritten_query: str) -> IntentResult:
+    """规则-based 意图分类（无 LLM 时的 fallback）。"""
+    query_lower = rewritten_query.lower()
+
+    # 检查是否匹配工具关键词
+    for tool_name, keywords in _TOOL_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in query_lower:
+                return IntentResult(
+                    intent_type="tool",
+                    rewritten_query=rewritten_query,
+                    confidence=0.75,
+                    target_tool=tool_name,
+                    reasoning=f"关键词匹配工具 '{tool_name}': {kw}",
+                )
+
+    # 默认 rag
+    return IntentResult(
+        intent_type="rag",
+        rewritten_query=rewritten_query,
+        confidence=0.85,
+        reasoning="无工具关键词匹配，默认归类为知识库检索",
+    )
+
+
+# ============== 子查询拆分（保留） ==============
 
 def split_parallel_subqueries(query: str) -> List[str]:
     """将包含多个并列主题的查询拆分为子查询列表（保留作为 fallback）。"""

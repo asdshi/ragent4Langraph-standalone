@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, TypedDict, Annotated
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Annotated
 from pydantic import BaseModel, Field
 from langchain_core.messages import AnyMessage, HumanMessage, AIMessage, RemoveMessage
 from langgraph.graph import add_messages
@@ -30,10 +30,15 @@ class RollbackRequest(BaseModel):
 
 
 class IntentResult(BaseModel):
-    rewritten_query: str
+    """意图识别结果 — 三分类：clarify / rag / tool"""
+    intent_type: Literal["clarify", "rag", "tool"] = "rag"
     confidence: float
-    need_clarify: bool
+    rewritten_query: str
+    target_tool: Optional[str] = None      # tool 意图时指定目标工具
+    tool_args: Optional[Dict[str, Any]] = None  # tool 意图时预解析参数
+    need_clarify: bool = False
     clarify_prompt: Optional[str] = None
+    reasoning: Optional[str] = None        # LLM 分类理由（可观测）
 
 
 # ============== State Management ==============
@@ -109,6 +114,13 @@ class RAGState(TypedDict, total=False):
     
     # === 本轮标识（用于三层时间裁剪回滚）===
     current_turn_id: str
+    
+    # === 工具执行结果 ===
+    tool_summary: str
+    tool_execution_trace: List[Dict[str, Any]]
+    
+    # === 可用工具（动态注入）===
+    available_tools: List[Dict[str, Any]]
     
     # === 内部临时状态（不会存入 checkpoint）===
     _to_archive: List[Dict[str, Any]]  # 本轮要归档的消息
