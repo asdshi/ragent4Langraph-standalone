@@ -175,14 +175,6 @@ class RAGEvalRunner:
             except Exception as exc:
                 logger.warning("Custom evaluation failed for '%s': %s", test_case.query[:40], exc)
 
-        # Step 5: Reference answer similarity (if available)
-        if test_case.reference_answer and answer:
-            try:
-                sim = await self._calc_similarity(answer, test_case.reference_answer)
-                metrics["reference_similarity"] = sim
-            except Exception as exc:
-                logger.debug("Similarity calc failed: %s", exc)
-
         qr.metrics = metrics
         qr.elapsed_ms = (time.monotonic() - t0) * 1000.0
         return qr
@@ -200,36 +192,6 @@ class RAGEvalRunner:
             elif hasattr(ctx, "chunk_id"):
                 ids.append(str(getattr(ctx, "chunk_id")))
         return ids
-
-    async def _calc_similarity(self, answer: str, reference: str) -> float:
-        """Calculate simple embedding cosine similarity between answer and reference.
-
-        Falls back to a naive token overlap ratio if embedding is unavailable.
-        """
-        try:
-            from src.libs.embedding.embedding_factory import EmbeddingFactory
-            from src.core.settings import load_settings
-
-            settings = load_settings()
-            emb = EmbeddingFactory.create(settings)
-            vec_a = emb.embed_query(answer)
-            vec_b = emb.embed_query(reference)
-
-            import math
-            dot = sum(x * y for x, y in zip(vec_a, vec_b))
-            norm_a = math.sqrt(sum(x * x for x in vec_a))
-            norm_b = math.sqrt(sum(x * x for x in vec_b))
-            if norm_a == 0 or norm_b == 0:
-                return 0.0
-            return dot / (norm_a * norm_b)
-        except Exception:
-            # Fallback: token overlap ratio
-            set_a = set(answer.lower().split())
-            set_b = set(reference.lower().split())
-            if not set_a or not set_b:
-                return 0.0
-            intersection = len(set_a & set_b)
-            return intersection / max(len(set_a), len(set_b))
 
     @staticmethod
     def _aggregate_metrics(results: List[QueryResult]) -> Dict[str, float]:

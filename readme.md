@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# ragent
+<img src="ragent.png" width="280" alt="ragent logo">
 
 ###  **当 RAG 只会机械匹配，你需要一个懂上下文的 Agent**
 

@@ -522,6 +522,15 @@ Reranker 失败后也会 graceful fallback 到 RRF 融合结果。
   - RAG Retrieval Quality
 
 ### 10.4 检索策略消融实验
+| 对比维度 | 检索层评估（Hit Rate / MRR） | 生成层评估（Faithfulness / Answer Relevancy） |
+| :--- | :--- | :--- |
+| 是否需要金标 | ✅ 必须有预期文档标签/Chunk ID | ❌ 不需要标准答案、无人工金标 |
+| 核心输入 | query + 真实关联文档ID + 召回文档列表 | query + retrieved_contexts + LLM生成答案 |
+| 评判方式 | 文档ID/标签 规则匹配、位置统计 | 大模型作为裁判 + Embedding相似度计算 |
+| 依赖模型 | 仅检索模型（Embedding/BM25），无生成LLM | 依赖打分LLM、Embedding模型 |
+| 计算成本 | 极低，纯数值运算，无大模型推理 | 较高，每条样本需多次LLM调用 |
+| 评估目标 | 检索召回完整性、排序优劣 | 答案幻觉程度、问答相关性、生成质量 |
+| 数据依赖 | 必须标注数据集（如mMARCO） | 无需标注数据集，纯RAG输出即可计算 |
 
 基于 [**mMARCO Chinese**](https://huggingface.co/datasets/unicamp-dl/mmarco)（真实 Bing 搜索日志人工标注数据集）的消融对比：
 
