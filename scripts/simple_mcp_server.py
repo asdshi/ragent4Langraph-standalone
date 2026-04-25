@@ -104,100 +104,93 @@ async def list_directory_handler(path: str = ".") -> types.CallToolResult:
         )
 
 
+# Tavily API Key（生产环境建议通过环境变量 TAVILY_API_KEY 注入）
+TAVILY_API_KEY = os.environ.get(
+    "TAVILY_API_KEY",
+    "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",
+)
+TAVILY_API_URL = "https://api.tavily.com/search"
+
+
 async def web_search_handler(query: str, max_results: int = 5) -> types.CallToolResult:
-    """简易网页搜索 — 使用 DuckDuckGo Lite HTML（无需 API key）。"""
+    """网页搜索 — 使用 Tavily 实时搜索引擎 API。
+    
+    相比 DuckDuckGo，Tavily 提供更稳定的响应速度、结构化结果和 AI 生成摘要。
+    """
+    import urllib.request
+    import urllib.error
+
+    payload = json.dumps({
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "search_depth": "basic",
+        "max_results": min(max_results, 10),
+        "include_answer": True,
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(
+        TAVILY_API_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
     try:
-        import urllib.request
-        import urllib.parse
-        import re
-        
-        # 使用 DuckDuckGo HTML 版本
-        url = "https://html.duckduckgo.com/html/"
-        data = urllib.parse.urlencode({"q": query}).encode("utf-8")
-        
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": "https://duckduckgo.com/",
-            },
-        )
-        
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-        
-        # 提取搜索结果
-        results: List[Dict[str, str]] = []
-        
-        # DuckDuckGo HTML 结果格式：.result 包含 .result__a (标题+链接) 和 .result__snippet (摘要)
-        result_blocks = re.findall(
-            r'<div class="result[^"]*"[^>]*>.*?<h2 class="result__title">.*?</h2>.*?</div>\s*</div>',
-            html, re.S
-        )
-        
-        if not result_blocks:
-            # fallback：用更宽松的模式
-            result_blocks = re.findall(
-                r'<div class="web-result[^"]*"[^>]*>.*?</div>\s*</div>',
-                html, re.S
-            )
-        
-        for block in result_blocks[:max_results]:
-            # 提取标题和链接
-            title_match = re.search(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
-            # 提取摘要
-            snippet_match = re.search(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', block, re.S)
-            
-            if not title_match:
-                continue
-            
-            href = title_match.group(1)
-            title = re.sub(r'<[^>]+>', '', title_match.group(2))
-            snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)) if snippet_match else ""
-            
-            # 处理 DuckDuckGo 重定向链接
-            if href.startswith("//"):
-                href = "https:" + href
-            elif href.startswith("/"):
-                href = "https://duckduckgo.com" + href
-            
-            results.append({
-                "title": title.strip(),
-                "url": href,
-                "snippet": snippet[:200] + "..." if len(snippet) > 200 else snippet,
-            })
-        
-        if not results:
-            # 可能是 DuckDuckGo 返回了 CAPTCHA 或空页面
-            return types.CallToolResult(
-                content=[types.TextContent(
-                    type="text",
-                    text=f"未能获取搜索结果（DuckDuckGo 可能要求验证）。\n\n建议：直接访问搜索引擎查询「{query}」"
-                )],
-                isError=False,
-            )
-        
-        lines = [f"搜索「{query}」的结果：\n"]
-        for i, r in enumerate(results, 1):
-            lines.append(f"{i}. {r['title']}")
-            lines.append(f"   链接: {r['url']}")
-            if r['snippet']:
-                lines.append(f"   摘要: {r['snippet']}")
-            lines.append("")
-        
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")[:500]
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text="\n".join(lines))],
-            isError=False,
-        )
-        
-    except Exception as e:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"搜索失败: {e}\n\n建议：直接访问搜索引擎查询「{query}」")],
+            content=[types.TextContent(type="text", text=f"Tavily API 错误 ({e.code}): {body}")],
             isError=True,
         )
+    except Exception as e:
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"Tavily 请求失败: {e}")],
+            isError=True,
+        )
+
+    # 解析响应
+    results = data.get("results", [])
+    answer = data.get("answer", "")
+
+    if not results and not answer:
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=f"未找到关于「{query}」的搜索结果。")],
+            isError=False,
+        )
+
+    lines = [f"Tavily 搜索「{query}」的结果：\n"]
+
+    # 如果有 AI 生成的摘要，放在最前面
+    if answer:
+        lines.append("【AI 摘要】")
+        lines.append(answer.strip())
+        lines.append("")
+
+    for i, r in enumerate(results[:max_results], 1):
+        title = r.get("title", "无标题")
+        url = r.get("url", "")
+        content = r.get("content", "")
+        score = r.get("score", 0)
+        lines.append(f"{i}. {title}")
+        if url:
+            lines.append(f"   链接: {url}")
+        if content:
+            # 截断过长的正文
+            snippet = content[:300] + "..." if len(content) > 300 else content
+            lines.append(f"   摘要: {snippet}")
+        if score:
+            lines.append(f"   相关度: {score:.2f}")
+        lines.append("")
+
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text="\n".join(lines))],
+        isError=False,
+    )
 
 
 # =============================================================================
@@ -254,7 +247,7 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "web_search",
-        "description": "Search the web using DuckDuckGo. Returns top results with title, URL, and snippet. No API key required.",
+        "description": "Search the web using Tavily real-time search engine. Returns structured results with title, URL, snippet, relevance score and an AI-generated answer summary. Fast and reliable.",
         "input_schema": {
             "type": "object",
             "properties": {

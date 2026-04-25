@@ -232,10 +232,14 @@ def _build_system_prompt(
     
     tools_desc = ""
     if available_tools:
-        tools_desc = "\n".join([
-            f"- {t.get('name', 'unknown')}: {t.get('description', '无描述')[:120]}"
-            for t in available_tools
-        ])
+        lines = []
+        for t in available_tools:
+            # OpenAI schema: {"type": "function", "function": {"name": ..., "description": ...}}
+            func = t.get("function") or {}
+            name = func.get("name") or t.get("name", "unknown")
+            desc = func.get("description") or t.get("description", "无描述")
+            lines.append(f"- {name}: {desc[:120]}")
+        tools_desc = "\n".join(lines)
     else:
         tools_desc = "（当前无可用工具）"
     
@@ -254,8 +258,9 @@ def _build_system_prompt(
 1. 如果查询可以通过已有信息直接回答，选择 "finish"
 2. 如果查询需要调用工具获取信息，选择 "call_tool"，并指定 tool_calls
 3. 每次最多调用 1-2 个工具
-4. 如果工具调用失败，可以重试或换用其他工具
-5. 思考要简洁，不要重复已知的上下文
+4. 只能从上面的【可用工具列表】中选择工具名，不能编造不存在的工具
+5. 如果工具调用失败，可以重试或换用其他工具
+6. 思考要简洁，不要重复已知的上下文
 
 输出格式（JSON）：
 {{

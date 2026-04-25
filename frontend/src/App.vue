@@ -1622,7 +1622,12 @@ body {
 
 .turn-divider-dot--plain {
   cursor: default;
-  opacity: 0.3;
+  width: 12px;
+  height: 12px;
+  border-width: 0;
+  opacity: 0.5;
+  background: var(--text-tertiary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 .turn-messages {
